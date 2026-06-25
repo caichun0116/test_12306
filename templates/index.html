@@ -185,6 +185,7 @@
     <div style="margin-top:18px;">
       <button class="go" id="goBtn">查询一次</button>
       <button class="mon" id="monBtn">开始监控</button>
+      <button class="mon" id="orderBtn">直接去 12306 下单页 ↗</button>
     </div>
     <div class="monbar" id="monbar">
       <span class="dot"></span>
@@ -447,6 +448,43 @@ $("#wxTest").addEventListener("click", async ()=>{
 });
 
 $("#goBtn").addEventListener("click", () => runQuery());
+
+// ──────────────────────────────────────────
+// 直接去 12306 下单页（不必先查票）
+// 根据当前「出发/目的/日期」让后端把站名解析成站码，再跳官方下单页
+// ──────────────────────────────────────────
+$("#orderBtn").addEventListener("click", openOrderPage);
+
+async function openOrderPage(){
+  const from = $("#from").value.trim();
+  const to   = $("#to").value.trim();
+  const date = $("#date").value;
+  if(!from || !to || !date){ alert("请先填写出发地、目的地和日期"); return; }
+
+  const btn = $("#orderBtn");
+  btn.disabled = true;
+  // 必须在用户点击的同步路径里先开一个空白标签页占位，
+  // 否则等异步 fetch 回来再 window.open 会被浏览器当作非用户手势拦截。
+  const w = window.open("about:blank", "_blank");
+  try {
+    const r = await fetch("/api/order-url", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({from, to, date})
+    });
+    const j = await r.json();
+    if(j.ok && j.url){
+      if(w) w.location = j.url; else window.open(j.url, "_blank");
+    } else {
+      if(w) w.close();
+      alert(j.error || "生成下单链接失败");
+    }
+  } catch(e){
+    if(w) w.close();
+    alert("请求失败：" + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 function buildDates(){
   const start = $("#date").value;

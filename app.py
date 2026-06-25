@@ -20,6 +20,38 @@ import notify
 app = Flask(__name__)
 
 
+def _resolve_station(value: str):
+    """兼容站名 / 站码，返回 (站码, 站名)。"""
+    value = (value or "").strip()
+    stations = ticket.load_stations()
+    if value in stations["code2name"]:
+        return value, stations["code2name"][value]
+    code = stations["name2code"].get(value)
+    if code:
+        return code, value
+    return None, value
+
+
+def _build_order_url(from_name: str, to_name: str, date: str):
+    """生成 12306 官方下单页链接。"""
+    if not from_name or not to_name or not date:
+        return None, "请填写出发地、目的地和日期"
+
+    from_code, from_label = _resolve_station(from_name)
+    to_code, to_label = _resolve_station(to_name)
+    if not from_code:
+        return None, f"未找到出发站「{from_name}」"
+    if not to_code:
+        return None, f"未找到到达站「{to_name}」"
+
+    url = (
+        "https://kyfw.12306.cn/otn/leftTicket/init"
+        f"?linktypeid=dc&fs={from_label},{from_code}&ts={to_label},{to_code}"
+        f"&date={date}&flag=N,N,Y"
+    )
+    return url, ""
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -58,6 +90,19 @@ def api_query():
         max_extend_queries=60 + max(0, min(extend, 5)) * 30,
     )
     return jsonify(result)
+
+
+@app.route("/api/order-url", methods=["POST"])
+def api_order_url():
+    """根据当前查询条件生成 12306 官方下单页链接。"""
+    data = request.get_json(silent=True) or {}
+    from_name = (data.get("from") or "").strip()
+    to_name   = (data.get("to") or "").strip()
+    date      = (data.get("date") or "").strip()
+    url, msg = _build_order_url(from_name, to_name, date)
+    if not url:
+        return jsonify({"ok": False, "error": msg or "生成下单链接失败"})
+    return jsonify({"ok": True, "url": url})
 
 
 @app.route("/api/notify", methods=["POST"])

@@ -14,8 +14,16 @@
 import re
 import time
 import json
+import threading
 import requests
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
+from requests.adapters import HTTPAdapter
+
+try:
+    from urllib3.util.retry import Retry
+except ImportError:                       # 极老版本兜底
+    Retry = None
 
 # ──────────────────────────────────────────
 # 座位类型在 leftTicket 返回数据中的列索引（固定）
@@ -56,7 +64,45 @@ HEADERS = {
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
+# 连接池 + 瞬时错误自动重试（并发查询时复用 TCP 连接，显著降低握手开销）
+_pool_kwargs = dict(pool_connections=16, pool_maxsize=16)
+if Retry is not None:
+    _pool_kwargs["max_retries"] = Retry(
+        total=2, backoff_factor=0.3,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET"]),
+    )
+_adapter = HTTPAdapter(**_pool_kwargs)
+SESSION.mount("https://", _adapter)
+SESSION.mount("http://", _adapter)
+
 EMPTY = ("--", "无", "0", "", "*")
+
+# ──────────────────────────────────────────
+# 并发与限速配置（买长乘短会产生大量区段查询，需并发但要防风控）
+# ──────────────────────────────────────────
+MAX_WORKERS = 6            # 同时在途的查询数
+_MIN_INTERVAL = 0.12       # 相邻查询「起点」最小间隔（秒），约 8 req/s
+
+
+class _RateGate:
+    """线程安全的最小间隔闸门：错开请求起点，但允许在网络层重叠。"""
+
+    def __init__(self, min_interval: float):
+        self._lock = threading.Lock()
+        self._min = min_interval
+        self._next = 0.0
+
+    def wait(self):
+        with self._lock:
+            now = time.monotonic()
+            delay = max(0.0, self._next - now)
+            self._next = max(now, self._next) + self._min
+        if delay:
+            time.sleep(delay)
+
+
+_RATE = _RateGate(_MIN_INTERVAL)
 
 
 # ──────────────────────────────────────────
@@ -108,6 +154,8 @@ def name_of(code: str) -> str:
 _QUERY_PATHS = ["leftTicket/queryG", "leftTicket/queryA",
                 "leftTicket/queryZ", "leftTicket/query"]
 _WARMED = {"done": False}
+# 记住上次命中的接口路径，下次优先尝试，避免每次都从头试 4 个
+_GOOD_PATH = {"path": None}
 
 
 def _warmup():
@@ -132,7 +180,11 @@ def query_tickets(from_code: str, to_code: str, date: str) -> list[dict]:
         "purpose_codes": "ADULT",
     }
     data = None
-    for path in _QUERY_PATHS:
+    # 优先尝试上次命中的路径，其余作为兜底
+    good = _GOOD_PATH["path"]
+    paths = _QUERY_PATHS if not good else \
+        [good] + [p for p in _QUERY_PATHS if p != good]
+    for path in paths:
         url = f"https://kyfw.12306.cn/otn/{path}"
         try:
             resp = SESSION.get(url, params=params, timeout=12)
@@ -141,6 +193,7 @@ def query_tickets(from_code: str, to_code: str, date: str) -> list[dict]:
         except (requests.RequestException, json.JSONDecodeError):
             continue
         if isinstance(data, dict) and "data" in data:
+            _GOOD_PATH["path"] = path   # 记住命中路径
             break  # 命中正确的接口路径
         data = None
 
@@ -276,26 +329,11 @@ def search(from_name: str, to_name: str, date: str,
         if wanted:
             direct = [t for t in direct if t["train_name"].upper() in wanted]
 
-    trains_out = []
-    seg_cache: dict[tuple, dict] = {}   # (fc,tc) -> {train_no: train}
-    query_budget = max_extend_queries
-
-    def seg_query(fc: str, tc: str) -> dict:
-        nonlocal query_budget
-        key = (fc, tc)
-        if key in seg_cache:
-            return seg_cache[key]
-        if query_budget <= 0:
-            return {}
-        query_budget -= 1
-        time.sleep(0.25)               # 轻微限速，避免触发风控
-        mp = {t["train_no"]: t for t in query_tickets(fc, tc, date)}
-        seg_cache[key] = mp
-        return mp
-
+    # ── 基础条目（直达信息，纯 CPU，无网络）──
+    entries = []
     for t in direct:
         has = has_ticket(t["seats"], seat_types)
-        entry = {
+        entries.append({
             "train_no":   t["train_no"],
             "train_name": t["train_name"],
             "from_name":  t["from_name"],
@@ -308,51 +346,102 @@ def search(from_name: str, to_name: str, date: str,
             "avail":      avail_summary(t["seats"], seat_types),
             "has":        has,
             "alternatives": [],
-        }
+            "_raw":       t,
+        })
 
-        # 直达没票 → 买长乘短延伸
-        if not has and extend > 0 and query_budget > 0:
-            stops = query_stops(t["train_no"], t["from_code"], t["to_code"], date)
-            if stops:
-                try:
-                    fi = stops.index(t["from_name"])
-                    ti = stops.index(t["to_name"])
-                except ValueError:
-                    fi = ti = -1
-                if 0 <= fi < ti:
-                    board_idx = [fi] + [fi - k for k in range(1, extend + 1) if fi - k >= 0]
-                    alight_idx = [ti] + [ti + k for k in range(1, extend + 1) if ti + k < len(stops)]
-                    for bi in board_idx:
-                        for ai in alight_idx:
-                            if bi == fi and ai == ti:
-                                continue          # 跳过原区段
-                            if bi >= ai:
-                                continue
-                            bname, aname = stops[bi], stops[ai]
-                            bcode, acode = code_of(bname), code_of(aname)
-                            if not bcode or not acode:
-                                continue
-                            mp = seg_query(bcode, acode)
-                            cand = mp.get(t["train_no"])
-                            if not cand:
-                                continue
-                            if has_ticket(cand["seats"], seat_types):
-                                entry["alternatives"].append({
-                                    "from_name": bname,
-                                    "to_name":   aname,
-                                    "from_code": bcode,
-                                    "to_code":   acode,
-                                    "from_time": cand["from_time"],
-                                    "to_time":   cand["to_time"],
-                                    "avail":     avail_summary(cand["seats"], seat_types),
-                                    "label":     _ext_label(bi, fi, ai, ti),
-                                })
+    need_ext = [e for e in entries if not e["has"]] if extend > 0 else []
 
-        trains_out.append(entry)
+    if need_ext:
+        # ── 阶段 1：并发拉取各车次经停站 ──
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            stops_list = list(ex.map(
+                lambda e: query_stops(e["train_no"], e["from_code"],
+                                      e["to_code"], date),
+                need_ext))
+
+        # ── 阶段 2：跨车次收集候选区段并去重 ──
+        train_segs: dict[str, list] = {}   # train_no -> [(bcode,acode,bname,aname,label)]
+        unique_segs: dict[tuple, None] = {}
+        for e, stops in zip(need_ext, stops_list):
+            segs = _alt_segments(stops, e["from_name"], e["to_name"], extend)
+            train_segs[e["train_no"]] = segs
+            for bc, ac, _, _, _ in segs:
+                unique_segs[(bc, ac)] = None
+
+        # 按预算截断唯一区段数量（dict 保持插入顺序，确定性）
+        seg_list = list(unique_segs.keys())[:max(0, max_extend_queries)]
+
+        # ── 阶段 3：并发拉取唯一区段余票（限速闸门防风控）──
+        seg_cache: dict[tuple, dict] = {}
+        if seg_list:
+            def fetch_seg(key):
+                fc, tc = key
+                _RATE.wait()
+                return key, {x["train_no"]: x
+                             for x in query_tickets(fc, tc, date)}
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                for key, mp in ex.map(fetch_seg, seg_list):
+                    seg_cache[key] = mp
+
+        # ── 阶段 4：组装备选（纯 CPU）──
+        for e in need_ext:
+            for bc, ac, bname, aname, label in train_segs.get(e["train_no"], []):
+                mp = seg_cache.get((bc, ac))
+                if not mp:
+                    continue
+                cand = mp.get(e["train_no"])
+                if not cand or not has_ticket(cand["seats"], seat_types):
+                    continue
+                e["alternatives"].append({
+                    "from_name": bname,
+                    "to_name":   aname,
+                    "from_code": bc,
+                    "to_code":   ac,
+                    "from_time": cand["from_time"],
+                    "to_time":   cand["to_time"],
+                    "avail":     avail_summary(cand["seats"], seat_types),
+                    "label":     label,
+                })
+
+    for e in entries:
+        e.pop("_raw", None)
 
     return {"ok": True, "from": from_name, "to": to_name, "date": date,
             "from_code": from_code, "to_code": to_code,
-            "trains": trains_out}
+            "trains": entries}
+
+
+def _alt_segments(stops: tuple, from_name: str, to_name: str,
+                  extend: int) -> list:
+    """根据经停站序列，列出「买长乘短」候选区段（不含原区段）。
+
+    返回 [(bcode, acode, bname, aname, label)]，与原串行逻辑等价。
+    """
+    if not stops:
+        return []
+    try:
+        fi = stops.index(from_name)
+        ti = stops.index(to_name)
+    except ValueError:
+        return []
+    if not (0 <= fi < ti):
+        return []
+
+    board_idx = [fi] + [fi - k for k in range(1, extend + 1) if fi - k >= 0]
+    alight_idx = [ti] + [ti + k for k in range(1, extend + 1) if ti + k < len(stops)]
+    out = []
+    for bi in board_idx:
+        for ai in alight_idx:
+            if bi == fi and ai == ti:
+                continue              # 跳过原区段
+            if bi >= ai:
+                continue
+            bname, aname = stops[bi], stops[ai]
+            bcode, acode = code_of(bname), code_of(aname)
+            if not bcode or not acode:
+                continue
+            out.append((bcode, acode, bname, aname, _ext_label(bi, fi, ai, ti)))
+    return out
 
 
 def _ext_label(bi: int, fi: int, ai: int, ti: int) -> str:

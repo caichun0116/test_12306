@@ -58,7 +58,14 @@
       "WebSearch",
       "Bash(.venv/bin/python -c \"import notify; print\\('notify import OK'\\)\")",
       "Bash(curl -s -o /dev/null -w \"服务运行中 HTTP %{http_code}\\\\n\" --noproxy '*' http://127.0.0.1:5001/)",
-      "Bash(.venv/bin/python *)"
+      "Bash(.venv/bin/python *)",
+      "Bash(python3 -c \"import flask, requests; print\\('deps ok'\\)\")",
+      "Bash(PORT=5099 .venv/bin/python app.py)",
+      "Bash(curl -s -X POST http://127.0.0.1:5099/api/order-url -H \"Content-Type: application/json\" -d '{\"from\":\"北京\",\"to\":\"上海\",\"date\":\"2026-07-01\"}')",
+      "Bash(curl -s -X POST http://127.0.0.1:5099/api/order-url -H \"Content-Type: application/json\" -d '{\"from\":\"北京\",\"to\":\"\",\"date\":\"2026-07-01\"}')",
+      "Bash(curl -s -X POST http://127.0.0.1:5099/api/order-url -H \"Content-Type: application/json\" -d '{\"from\":\"火星\",\"to\":\"上海\",\"date\":\"2026-07-01\"}')",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('ticket.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 -c \"import ticket; print\\('import OK'\\); print\\('helpers:', hasattr\\(ticket,'_alt_segments'\\), hasattr\\(ticket,'_RATE'\\), ticket.MAX_WORKERS\\)\")"
     ]
   }
 }
