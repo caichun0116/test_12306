@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>12306 余票查询 · 买长乘短</title>
+<style>
+  :root { --blue:#2563eb; --green:#16a34a; --gray:#64748b; --bg:#f1f5f9; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+         background:var(--bg); color:#0f172a; }
+  header { background:var(--blue); color:#fff; padding:18px 24px; }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; font-size:13px; opacity:.85; }
+  .wrap { max-width:960px; margin:24px auto; padding:0 16px; }
+  .card { background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(0,0,0,.06);
+          padding:20px; margin-bottom:20px; }
+  .row { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; }
+  .field { display:flex; flex-direction:column; gap:6px; }
+  .field label { font-size:13px; color:var(--gray); }
+  .field input { padding:9px 12px; border:1px solid #cbd5e1; border-radius:8px;
+                 font-size:15px; min-width:150px; }
+  .field input:focus { outline:none; border-color:var(--blue); }
+  .checks { display:flex; flex-wrap:wrap; gap:14px; margin-top:6px; }
+  .checks label { font-size:14px; display:flex; align-items:center; gap:5px; cursor:pointer; }
+  .group-title { font-size:13px; color:var(--gray); margin:14px 0 2px; }
+  button.go { background:var(--blue); color:#fff; border:none; border-radius:8px;
+              padding:11px 28px; font-size:16px; cursor:pointer; }
+  button.go:disabled { opacity:.6; cursor:not-allowed; }
+  button.mon { background:#fff; color:var(--blue); border:1.5px solid var(--blue);
+               border-radius:8px; padding:11px 22px; font-size:16px; cursor:pointer; margin-left:10px; }
+  button.mon.on { background:#dc2626; color:#fff; border-color:#dc2626; }
+  .hint { font-size:12px; color:var(--gray); margin-top:8px; }
+  .monbar { margin-top:14px; padding:12px 14px; border-radius:8px; background:#eff6ff;
+            border:1px solid #bfdbfe; font-size:14px; color:#1e40af; display:none;
+            align-items:center; gap:14px; flex-wrap:wrap; }
+  .monbar.show { display:flex; }
+  .monbar .dot { width:9px; height:9px; border-radius:50%; background:#22c55e;
+                 animation:pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .monbar .cd { font-weight:700; }
+  /* 结果 */
+  .train { border:1px solid #e2e8f0; border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+  .train.ok { border-color:#bbf7d0; background:#f0fdf4; }
+  .train-head { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:baseline; }
+  .train-name { font-size:17px; font-weight:700; }
+  .time { color:#334155; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:20px; }
+  .badge.direct { background:var(--green); color:#fff; }
+  .badge.none { background:#e2e8f0; color:var(--gray); }
+  .badge.ext { background:#fef3c7; color:#92400e; }
+  .seats { margin-top:8px; display:flex; flex-wrap:wrap; gap:8px; }
+  .seat { font-size:13px; background:#dcfce7; color:#166534; padding:3px 10px; border-radius:6px; }
+  .alts { margin-top:10px; border-top:1px dashed #e2e8f0; padding-top:10px; }
+  .alt { font-size:13px; padding:6px 0; display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; }
+  .alt .label { background:#fff7ed; color:#9a3412; padding:2px 8px; border-radius:6px; font-size:12px; }
+  .alt .route { color:#334155; font-weight:600; }
+  .empty,.error { padding:16px; border-radius:8px; }
+  .empty { background:#f8fafc; color:var(--gray); }
+  .error { background:#fef2f2; color:#b91c1c; }
+  .spinner { display:inline-block; width:16px; height:16px; border:2px solid #fff;
+             border-top-color:transparent; border-radius:50%; animation:spin .7s linear infinite;
+             vertical-align:-3px; margin-right:6px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  a.book { display:inline-block; background:#f97316; color:#fff; text-decoration:none;
+           font-size:13px; padding:4px 12px; border-radius:6px; white-space:nowrap; }
+  a.book:hover { background:#ea580c; }
+  a.book.sm { font-size:12px; padding:3px 10px; }
+  a.book.hb { background:#0d9488; }
+  a.book.hb:hover { background:#0f766e; }
+  .hist-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .hist-head .t { font-size:14px; color:var(--gray); }
+  .hist-head .clr { font-size:13px; color:#b91c1c; background:none; border:none; cursor:pointer; }
+  .hist-list { display:flex; flex-wrap:wrap; gap:8px; }
+  .hist-item { display:inline-flex; align-items:center; gap:8px; background:#f1f5f9;
+               border:1px solid #e2e8f0; border-radius:20px; padding:5px 6px 5px 12px;
+               font-size:13px; cursor:pointer; }
+  .hist-item:hover { background:#e0e7ff; border-color:#c7d2fe; }
+  .hist-item .x { color:var(--gray); border:none; background:none; cursor:pointer;
+                  font-size:14px; line-height:1; padding:2px 4px; border-radius:50%; }
+  .hist-item .x:hover { background:#cbd5e1; color:#0f172a; }
+  .tip12306 { margin:0 0 20px; padding:12px 14px; border-radius:8px; background:#fffbeb;
+              border:1px solid #fde68a; font-size:13px; color:#92400e; line-height:1.6; }
+  .tip12306 a { color:#b45309; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚄 12306 余票查询 · 买长乘短</h1>
+  <p>直达没票时，自动尝试同一车次「提前一站上车 / 延后一站下车」的余票</p>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <div class="row">
+      <div class="field">
+        <label>出发地</label>
+        <input id="from" list="stationList" placeholder="如 北京南" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>目的地</label>
+        <input id="to" list="stationList" placeholder="如 上海虹桥" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>出行日期</label>
+        <input id="date" type="date">
+      </div>
+      <div class="field">
+        <label>结束日期（可选，多日期）</label>
+        <input id="dateEnd" type="date">
+      </div>
+    </div>
+    <datalist id="stationList"></datalist>
+
+    <div class="group-title">指定车次（可选，逗号分隔，如 G1,G3；留空 = 全部）</div>
+    <div class="checks">
+      <input id="trainNames" type="text" placeholder="如 G1,G3,D5"
+             style="width:280px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;">
+    </div>
+
+    <div class="group-title">车次类型（不选 = 全部）</div>
+    <div class="checks" id="trainTypes">
+      <label><input type="checkbox" value="GC">高铁/城际(G/C)</label>
+      <label><input type="checkbox" value="D">动车(D)</label>
+      <label><input type="checkbox" value="Z">直达(Z)</label>
+      <label><input type="checkbox" value="T">特快(T)</label>
+      <label><input type="checkbox" value="K">快速(K)</label>
+      <label><input type="checkbox" value="OTHER">其他</label>
+    </div>
+
+    <div class="group-title">座位类型（不选 = 全部）</div>
+    <div class="checks" id="seatTypes">
+      <label><input type="checkbox" value="商务座">商务座</label>
+      <label><input type="checkbox" value="一等座">一等座</label>
+      <label><input type="checkbox" value="二等座">二等座</label>
+      <label><input type="checkbox" value="动卧">动卧</label>
+      <label><input type="checkbox" value="软卧">软卧</label>
+      <label><input type="checkbox" value="硬卧">硬卧</label>
+      <label><input type="checkbox" value="硬座">硬座</label>
+      <label><input type="checkbox" value="无座">无座</label>
+    </div>
+
+    <div class="group-title">延伸范围（直达没票时往前/往后查几站）</div>
+    <div class="checks">
+      <label><input type="radio" name="extend" value="0">不延伸</label>
+      <label><input type="radio" name="extend" value="1" checked>前后各 1 站</label>
+      <label><input type="radio" name="extend" value="2">前后各 2 站</label>
+      <label><input type="radio" name="extend" value="3">前后各 3 站</label>
+      <label><input type="radio" name="extend" value="4">前后各 4 站</label>
+      <label><input type="radio" name="extend" value="5">前后各 5 站</label>
+    </div>
+
+    <div class="group-title">监控（开启后定时重查，有票弹浏览器通知）</div>
+    <div class="checks" style="align-items:center;">
+      <label>每隔
+        <input id="interval" type="number" value="20" min="15" max="600"
+               style="width:64px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
+        秒重查一次
+      </label>
+      <label><input type="checkbox" id="autoOpen"> 发现有票自动弹开 12306 下单页</label>
+    </div>
+
+    <div class="group-title">微信通知（有票时推到手机微信，需电脑开着、监控页别关）</div>
+    <div class="checks" style="align-items:center; gap:10px;">
+      <label><input type="checkbox" id="wxEnable"> 启用</label>
+      <span style="font-size:13px;color:var(--gray);">已存配置：</span>
+      <select id="wxSaved" style="padding:7px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;min-width:160px;">
+        <option value="">— 选择已存配置 —</option>
+      </select>
+      <button class="mon" id="wxSaveBtn" style="margin-left:0;padding:7px 14px;font-size:14px;">保存当前为配置</button>
+      <button class="mon" id="wxDelBtn" style="margin-left:0;padding:7px 14px;font-size:14px;">删除所选</button>
+    </div>
+    <div class="checks" style="align-items:center; gap:10px;">
+      <select id="wxChannel" style="padding:7px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;">
+        <option value="pushplus">PushPlus（推个人微信）</option>
+        <option value="serverchan">Server酱（推个人微信）</option>
+        <option value="wecom">企业微信群机器人</option>
+      </select>
+      <input id="wxToken" type="text" placeholder="粘贴 token / SendKey / 机器人webhook网址"
+             style="flex:1;min-width:240px;padding:7px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;">
+      <button class="mon" id="wxTest" style="margin-left:0;padding:7px 16px;font-size:14px;">测试</button>
+      <span id="wxStatus" style="font-size:13px;color:var(--gray);"></span>
+    </div>
+
+    <div style="margin-top:18px;">
+      <button class="go" id="goBtn">查询一次</button>
+      <button class="mon" id="monBtn">开始监控</button>
+    </div>
+    <div class="monbar" id="monbar">
+      <span class="dot"></span>
+      <span>监控中 · 第 <b id="monCycle">0</b> 轮 · 上次 <b id="monLast">—</b></span>
+      <span>下次查询 <span class="cd" id="monCd">—</span>s</span>
+    </div>
+    <div class="hint">数据来自 12306 官网公开查票接口，仅供个人查询参考；含延伸的查询会多次请求，监控间隔建议 ≥ 30 秒，避免被 12306 限速。浏览器通知需在弹窗中点「允许」，并保持本页面开启。</div>
+  </div>
+
+  <div class="card" id="histCard" style="display:none;">
+    <div class="hist-head">
+      <span class="t">🕘 历史搜索（点击回填表单）</span>
+      <button class="clr" id="histClear">清空</button>
+    </div>
+    <div class="hist-list" id="histList"></div>
+  </div>
+
+  <div class="tip12306">
+    💡 想下单更快：请<b>先在本浏览器打开并登录
+    <a href="https://kyfw.12306.cn" target="_blank">12306 官网</a>、保持登录标签页别关</b>，
+    并提前在 12306 添加好乘车人。这样下方「去 12306 下单」按钮跳过去就是已登录状态，省掉抢票时的登录时间。
+    没票时也可在 12306 用<b>「候补购票」</b>让官方自动锁票。
+  </div>
+
+  <div id="result"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+// 默认日期 = 明天
+(function initDate(){
+  const d = new Date(); d.setDate(d.getDate()+1);
+  $("#date").value = d.toISOString().slice(0,10);
+})();
+
+// 加载站点联想
+fetch("/api/stations").then(r=>r.json()).then(d=>{
+  if(!d.ok) return;
+  const dl = $("#stationList");
+  dl.innerHTML = d.stations.map(n=>`<option value="${n}">`).join("");
+}).catch(()=>{});
+
+function checkedValues(id){
+  return [...document.querySelectorAll(`#${id} input:checked`)].map(i=>i.value);
+}
+function setCheckedValues(id, values){
+  const set = new Set(values||[]);
+  document.querySelectorAll(`#${id} input[type=checkbox]`).forEach(i=>{ i.checked = set.has(i.value); });
+}
+
+// ──────────────────────────────────────────
+// 历史搜索记录（存浏览器 localStorage）
+// ──────────────────────────────────────────
+const HIST_KEY = "qp_history_v1";
+const HIST_MAX = 12;
+
+// 读取整张表单状态（用于保存历史 + 回填）
+function formState(){
+  return {
+    from: $("#from").value.trim(),
+    to: $("#to").value.trim(),
+    date: $("#date").value,
+    dateEnd: $("#dateEnd").value,
+    train_types: checkedValues("trainTypes"),
+    seat_types: checkedValues("seatTypes"),
+    train_names: ($("#trainNames").value||"").trim(),
+    extend: +document.querySelector('input[name="extend"]:checked').value,
+    interval: +$("#interval").value || 20,
+  };
+}
+// 把一条历史回填到表单
+function applyState(s){
+  $("#from").value = s.from||"";
+  $("#to").value = s.to||"";
+  $("#date").value = s.date||"";
+  $("#dateEnd").value = s.dateEnd||"";
+  setCheckedValues("trainTypes", s.train_types);
+  setCheckedValues("seatTypes", s.seat_types);
+  $("#trainNames").value = s.train_names||"";
+  const ext = document.querySelector(`input[name="extend"][value="${s.extend??1}"]`);
+  if(ext) ext.checked = true;
+  if(s.interval) $("#interval").value = s.interval;
+}
+
+function loadHist(){
+  try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; }
+  catch(_){ return []; }
+}
+function saveHist(list){
+  try { localStorage.setItem(HIST_KEY, JSON.stringify(list)); } catch(_){}
+}
+// 保存一条（按 出发|到达|日期 去重，最新置顶）
+function pushHistory(s){
+  if(!s.from || !s.to || !s.date) return;
+  const sig = `${s.from}|${s.to}|${s.date}|${s.dateEnd}|${s.train_names}`;
+  let list = loadHist().filter(h => `${h.from}|${h.to}|${h.date}|${h.dateEnd}|${h.train_names}` !== sig);
+  list.unshift(s);
+  if(list.length > HIST_MAX) list = list.slice(0, HIST_MAX);
+  saveHist(list);
+  renderHistory();
+}
+function histLabel(s){
+  let txt = `${s.from} → ${s.to} · ${s.date}`;
+  if(s.dateEnd && s.dateEnd > s.date) txt += `~${s.dateEnd.slice(5)}`;
+  if(s.train_names) txt += ` · ${s.train_names}`;
+  return txt;
+}
+function renderHistory(){
+  const list = loadHist();
+  const card = $("#histCard"), box = $("#histList");
+  if(!list.length){ card.style.display = "none"; return; }
+  card.style.display = "";
+  box.innerHTML = list.map((s,i)=>`
+    <span class="hist-item" data-i="${i}" title="点击回填">
+      <span class="lab">${histLabel(s)}</span>
+      <button class="x" data-del="${i}" title="删除">✕</button>
+    </span>`).join("");
+}
+// 事件委托：点条目回填，点 ✕ 删除
+$("#histList").addEventListener("click", (e)=>{
+  const del = e.target.closest("[data-del]");
+  if(del){
+    e.stopPropagation();
+    const list = loadHist();
+    list.splice(+del.dataset.del, 1);
+    saveHist(list); renderHistory();
+    return;
+  }
+  const item = e.target.closest(".hist-item");
+  if(item){
+    applyState(loadHist()[+item.dataset.i]);
+    window.scrollTo({top:0, behavior:"smooth"});
+  }
+});
+$("#histClear").addEventListener("click", ()=>{ saveHist([]); renderHistory(); });
+renderHistory();
+
+// ──────────────────────────────────────────
+// 微信通知配置（存浏览器 localStorage）
+// ──────────────────────────────────────────
+const WX_KEY = "qp_wechat_v1";          // 当前激活配置
+const WX_LIST_KEY = "qp_wx_configs_v1"; // 已保存的多套配置 [{name,channel,token}]
+
+(function initWx(){
+  try {
+    const c = JSON.parse(localStorage.getItem(WX_KEY)) || {};
+    if(c.enable) $("#wxEnable").checked = true;
+    if(c.channel) $("#wxChannel").value = c.channel;
+    if(c.token) $("#wxToken").value = c.token;
+  } catch(_){}
+})();
+function saveWx(){
+  const c = { enable:$("#wxEnable").checked, channel:$("#wxChannel").value, token:$("#wxToken").value.trim() };
+  try { localStorage.setItem(WX_KEY, JSON.stringify(c)); } catch(_){}
+  return c;
+}
+["wxEnable","wxChannel","wxToken"].forEach(id => $("#"+id).addEventListener("change", saveWx));
+
+// —— 多套配置：保存 / 选择 / 删除 ——
+function loadWxList(){
+  try { return JSON.parse(localStorage.getItem(WX_LIST_KEY)) || []; }
+  catch(_){ return []; }
+}
+function saveWxList(list){
+  try { localStorage.setItem(WX_LIST_KEY, JSON.stringify(list)); } catch(_){}
+}
+const CHANNEL_LABEL = { pushplus:"PushPlus", serverchan:"Server酱", wecom:"企业微信" };
+function renderWxList(selectedName){
+  const list = loadWxList();
+  const sel = $("#wxSaved");
+  sel.innerHTML = `<option value="">— 选择已存配置 —</option>` +
+    list.map(c => `<option value="${c.name}">${c.name}（${CHANNEL_LABEL[c.channel]||c.channel}）</option>`).join("");
+  if(selectedName) sel.value = selectedName;
+}
+renderWxList();
+
+// 选择已存配置 → 回填渠道+token
+$("#wxSaved").addEventListener("change", ()=>{
+  const name = $("#wxSaved").value;
+  if(!name) return;
+  const c = loadWxList().find(x => x.name === name);
+  if(c){
+    $("#wxChannel").value = c.channel;
+    $("#wxToken").value = c.token;
+    $("#wxEnable").checked = true;
+    saveWx();
+    $("#wxStatus").textContent = `已载入「${name}」`; $("#wxStatus").style.color = "#16a34a";
+  }
+});
+
+// 保存当前为配置
+$("#wxSaveBtn").addEventListener("click", ()=>{
+  const channel = $("#wxChannel").value;
+  const token = $("#wxToken").value.trim();
+  if(!token){ $("#wxStatus").textContent = "请先粘贴 token 再保存"; $("#wxStatus").style.color = "#b91c1c"; return; }
+  const name = (prompt("给这套配置起个名字，如：个人微信 / 工作群") || "").trim();
+  if(!name) return;
+  let list = loadWxList().filter(x => x.name !== name);   // 同名覆盖
+  list.push({name, channel, token});
+  saveWxList(list);
+  renderWxList(name);
+  $("#wxStatus").textContent = `已保存「${name}」`; $("#wxStatus").style.color = "#16a34a";
+});
+
+// 删除所选配置
+$("#wxDelBtn").addEventListener("click", ()=>{
+  const name = $("#wxSaved").value;
+  if(!name){ $("#wxStatus").textContent = "请先在下拉里选一个配置"; $("#wxStatus").style.color = "#b91c1c"; return; }
+  if(!confirm(`确定删除配置「${name}」？`)) return;
+  saveWxList(loadWxList().filter(x => x.name !== name));
+  renderWxList();
+  $("#wxStatus").textContent = `已删除「${name}」`; $("#wxStatus").style.color = "var(--gray)";
+});
+
+// 调后端转发推送
+async function pushWeChat(title, body, url, items){
+  const c = saveWx();
+  if(!c.enable || !c.token) return;
+  try {
+    const r = await fetch("/api/notify", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({channel:c.channel, token:c.token, title, body, url, items})
+    });
+    const j = await r.json();
+    if(!j.ok) console.warn("微信推送失败：", j.error);
+  } catch(e){ console.warn("微信推送请求失败：", e); }
+}
+
+// 测试按钮
+$("#wxTest").addEventListener("click", async ()=>{
+  const c = saveWx();
+  const st = $("#wxStatus");
+  if(!c.token){ st.textContent = "请先粘贴 token"; st.style.color = "#b91c1c"; return; }
+  st.textContent = "发送中…"; st.style.color = "var(--gray)";
+  const sampleDate = $("#date").value || "2026-07-01";
+  const sampleUrl = "https://kyfw.12306.cn/otn/leftTicket/init?linktypeid=dc&fs=潢川,VNP&ts=永康南,AOH&date="+sampleDate+"&flag=N,N,Y";
+  const sampleItems = [{
+    train_name:"K306", from_name:"潢川", from_time:"18:44",
+    to_name:"永康南", to_time:"09:08", duration:"14:24",
+    has:false, avail:[], book_url:"", hb_url:sampleUrl,
+    alternatives:[{
+      label:"延后1站下车", from_name:"潢川", from_time:"18:44",
+      to_name:"缙云", to_time:"10:00",
+      avail:[{type:"硬卧", count:1}], url:sampleUrl,
+    }],
+  }];
+  try {
+    const r = await fetch("/api/notify", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({channel:c.channel, token:c.token,
+        title:"🚄 余票提醒·测试", body:"如果你在微信收到这条、且下面的链接可点击，就配置成功啦！",
+        items: sampleItems,
+        url: sampleUrl})
+    });
+    const j = await r.json();
+    st.textContent = j.ok ? "✅ 已发送，查收微信" : ("❌ "+(j.error||"失败"));
+    st.style.color = j.ok ? "#16a34a" : "#b91c1c";
+  } catch(e){ st.textContent = "❌ 请求失败"; st.style.color = "#b91c1c"; }
+});
+
+$("#goBtn").addEventListener("click", () => runQuery());
+
+function buildDates(){
+  const start = $("#date").value;
+  const end = $("#dateEnd").value;
+  if(!start) return [];
+  if(!end || end < start) return [start];
+  const out = []; let d = new Date(start+"T00:00:00"); const e = new Date(end+"T00:00:00");
+  while(d <= e && out.length < 5){            // 最多 5 天，防止请求过多
+    out.push(d.toISOString().slice(0,10));
+    d.setDate(d.getDate()+1);
+  }
+  return out;
+}
+
+function buildBody(date){
+  return {
+    from: $("#from").value.trim(),
+    to: $("#to").value.trim(),
+    date,
+    train_types: checkedValues("trainTypes"),
+    seat_types: checkedValues("seatTypes"),
+    train_names: ($("#trainNames").value||"").split(/[,，\s]+/).map(s=>s.trim()).filter(Boolean),
+    extend: +document.querySelector('input[name="extend"]:checked').value,
+  };
+}
+
+function validateForm(){
+  if(!$("#from").value.trim() || !$("#to").value.trim() || !$("#date").value) return "请填写出发地、目的地和日期";
+  return null;
+}
+
+// 单次查询：拉一个日期的数据
+async function doQuery(body){
+  const res = await fetch("/api/query", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  return await res.json();
+}
+
+// 查询所有日期（串行，避免同时打太多请求被 12306 限速）
+async function doQueryAll(){
+  const dates = buildDates();
+  const results = [];
+  for(const date of dates){
+    try { results.push({date, data: await doQuery(buildBody(date))}); }
+    catch(e){ results.push({date, data:{ok:false, error:"请求失败："+e.message}}); }
+  }
+  return results;
+}
+
+async function runQuery(){
+  const err = validateForm();
+  if(err){ renderAll([{date:$("#date").value, data:{ok:false,error:err}}]); return; }
+  pushHistory(formState());
+
+  const btn = $("#goBtn");
+  btn.disabled = true;
+  $("#result").innerHTML = `<div class="card"><span class="spinner"></span>查询中…（多日期 / 延伸查询会更久，请稍候）</div>`;
+  try {
+    renderAll(await doQueryAll());
+  } catch(e){
+    renderAll([{date:$("#date").value, data:{ok:false, error:"请求失败："+e.message}}]);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ──────────────────────────────────────────
+// 监控模式
+// ──────────────────────────────────────────
+const monitor = {
+  on:false, timer:null, cdTimer:null, cycle:0,
+  notified:new Set(),     // 已通知过「有票」的车次，避免重复打扰
+};
+
+$("#monBtn").addEventListener("click", toggleMonitor);
+
+async function toggleMonitor(){
+  if(monitor.on){ stopMonitor(); return; }
+
+  const err = validateForm();
+  if(err){ renderAll([{date:$("#date").value, data:{ok:false,error:err}}]); return; }
+  pushHistory(formState());
+
+  // 申请通知权限
+  if("Notification" in window && Notification.permission === "default"){
+    try { await Notification.requestPermission(); } catch(_){}
+  }
+
+  monitor.on = true;
+  monitor.cycle = 0;
+  monitor.notified.clear();
+  const mb = $("#monBtn");
+  mb.textContent = "停止监控"; mb.classList.add("on");
+  $("#monbar").classList.add("show");
+  monitorTick();   // 立即先查一次
+}
+
+function stopMonitor(){
+  monitor.on = false;
+  clearTimeout(monitor.timer);
+  clearInterval(monitor.cdTimer);
+  const mb = $("#monBtn");
+  mb.textContent = "开始监控"; mb.classList.remove("on");
+  $("#monbar").classList.remove("show");
+}
+
+async function monitorTick(){
+  if(!monitor.on) return;
+  monitor.cycle++;
+  $("#monCycle").textContent = monitor.cycle;
+  try {
+    const results = await doQueryAll();
+    renderAll(results);
+    checkAndNotify(results);
+  } catch(e){
+    // 单轮失败不停止监控，下一轮继续
+    console.warn("监控查询失败", e);
+  }
+  $("#monLast").textContent = new Date().toLocaleTimeString();
+  if(monitor.on) scheduleNext();
+}
+
+function scheduleNext(){
+  let secs = Math.max(15, Math.min(600, +$("#interval").value || 60));
+  $("#monCd").textContent = secs;
+  clearInterval(monitor.cdTimer);
+  monitor.cdTimer = setInterval(()=>{
+    secs--; $("#monCd").textContent = Math.max(0, secs);
+    if(secs<=0) clearInterval(monitor.cdTimer);
+  }, 1000);
+  monitor.timer = setTimeout(monitorTick, secs*1000);
+}
+
+// 找出本轮有票的车次（跨所有日期），对新出现的弹通知 + 可选自动弹开下单页
+function checkAndNotify(results){
+  const availKeys = new Set();
+  const fresh = [];
+  for(const {date, data} of results){
+    if(!data || !data.ok) continue;
+    for(const t of (data.trains||[])){
+      const hasAlt = t.alternatives && t.alternatives.length;
+      if(!(t.has || hasAlt)) continue;
+      const kind = t.has ? "直达有票" : `买长乘短 ${t.alternatives.length} 个方案`;
+      const key = date + "|" + t.train_name + "|" + kind;
+      availKeys.add(key);
+      if(!monitor.notified.has(key)){ monitor.notified.add(key); fresh.push({t, kind, date}); }
+    }
+  }
+  // 清理已无票的，使其下次有票时能再次提醒
+  for(const k of [...monitor.notified]) if(!availKeys.has(k)) monitor.notified.delete(k);
+  if(!fresh.length) return;
+
+  beep();
+  const title = `🎫 有票啦！${$("#from").value}→${$("#to").value}`;
+  const lines = fresh.slice(0,6).map(({t,kind,date})=>{
+    const seat = t.has ? t.avail.map(s=>`${s.type}${s.count}`).join(" ")
+                       : t.alternatives.map(a=>a.label).join("/");
+    return `${date} ${t.train_name} ${t.from_time}→${t.to_time} ${kind}：${seat}`;
+  });
+  const bodyTxt = lines.join("\n") + (fresh.length>6 ? `\n…等 ${fresh.length} 趟` : "");
+
+  // 每个有票车次对应的官方下单链接
+  const urls = fresh.map(({t,kind,date})=>{
+    if(t.has) return bookUrl(t.from_name, t.from_code, t.to_name, t.to_code, date);
+    const a = t.alternatives[0];
+    return a ? bookUrl(a.from_name, a.from_code, a.to_name, a.to_code, date) : null;
+  }).filter(Boolean);
+
+  showNotification(title, bodyTxt, urls[0]);
+
+  // 微信推送：传结构化车次，渠道里渲染成与网页一致的「结果卡片」
+  const items = fresh.slice(0,6).map(({t,date})=>{
+    const it = {
+      train_name: t.train_name,
+      date: date,
+      from_name: t.from_name, from_time: t.from_time,
+      to_name: t.to_name, to_time: t.to_time,
+      duration: t.duration,
+      has: !!t.has,
+      avail: t.has ? (t.avail||[]).map(s=>({type:s.type, count:s.count})) : [],
+      book_url: t.has ? bookUrl(t.from_name, t.from_code, t.to_name, t.to_code, date) : "",
+      hb_url: !t.has ? bookUrl(t.from_name, t.from_code, t.to_name, t.to_code, date) : "",
+      alternatives: (t.alternatives||[]).map(a=>({
+        label: a.label,
+        from_name: a.from_name, from_time: a.from_time,
+        to_name: a.to_name, to_time: a.to_time,
+        avail: (a.avail||[]).map(s=>({type:s.type, count:s.count})),
+        url: bookUrl(a.from_name, a.from_code, a.to_name, a.to_code, date),
+      })),
+    };
+    return it;
+  });
+  pushWeChat(title, bodyTxt, urls[0] || "", items);
+
+  // 自动弹开下单页（只开第一个，避免标签页刷屏 + 被浏览器拦截）
+  if($("#autoOpen").checked && urls[0]){
+    const w = window.open(urls[0], "_blank");
+    if(!w) console.warn("自动弹窗被浏览器拦截，请在地址栏允许本站弹出窗口");
+  }
+}
+
+function showNotification(title, body, url){
+  if("Notification" in window && Notification.permission === "granted"){
+    try {
+      const n = new Notification(title, {body, tag:"ticket-monitor"});
+      if(url) n.onclick = () => { window.open(url, "_blank"); window.focus(); };
+      return;
+    } catch(_){}
+  }
+  // 没权限时退化为控制台输出
+  console.log("[通知]", title, body, url||"");
+}
+
+// 简易提示音（WebAudio，无需音频文件）
+let audioCtx = null;
+function beep(){
+  try {
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    [0, 0.18, 0.36].forEach(delay=>{
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      o.type="sine"; o.frequency.value=880;
+      const t0 = audioCtx.currentTime + delay;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.3, t0+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0+0.15);
+      o.start(t0); o.stop(t0+0.16);
+    });
+  } catch(_){}
+}
+
+function seatHtml(avail){
+  return avail.map(s=>`<span class="seat">${s.type} ${s.count}</span>`).join("");
+}
+
+// 生成 12306 官方查票/下单页深链（已登录则直接进登录态）
+// 注意：fs/ts 必须用「站名,代码」字面逗号，逗号不能编码成 %2C，否则 12306 识别不了
+function bookUrl(fromName, fromCode, toName, toCode, date){
+  return `https://kyfw.12306.cn/otn/leftTicket/init?linktypeid=dc&fs=${fromName},${fromCode}&ts=${toName},${toCode}&date=${date}&flag=N,N,Y`;
+}
+function bookBtn(fromName, fromCode, toName, toCode, date, small){
+  if(!fromCode || !toCode) return "";
+  const url = bookUrl(fromName, fromCode, toName, toCode, date);
+  return `<a class="book${small?' sm':''}" href="${url}" target="_blank" rel="noopener">去 12306 下单 ↗</a>`;
+}
+// 候补购票按钮：跳同一官方页面，没票的车次在该页可提交候补订单
+function hbBtn(fromName, fromCode, toName, toCode, date){
+  if(!fromCode || !toCode) return "";
+  const url = bookUrl(fromName, fromCode, toName, toCode, date);
+  return `<a class="book hb sm" href="${url}" target="_blank" rel="noopener">去 12306 候补 ↗</a>`;
+}
+
+function renderAll(list){
+  const box = $("#result");
+  if(!list || !list.length){
+    box.innerHTML = `<div class="card"><div class="empty">请先选择出行日期</div></div>`;
+    return;
+  }
+  box.innerHTML = list.map(({date, data}) => renderOne(date, data)).join("");
+}
+
+function renderOne(date, d){
+  if(!d || !d.ok){
+    return `<div class="card"><div class="error">${date}：${(d&&d.error)||"查询失败"}</div></div>`;
+  }
+  const trains = d.trains || [];
+  if(trains.length===0){
+    return `<div class="card"><div class="empty">${date}：${d.note||"没有查询到符合条件的列车"}</div></div>`;
+  }
+
+  let html = `<div class="card"><div style="margin-bottom:12px;color:var(--gray);font-size:14px;">
+    ${d.from} → ${d.to} ｜ <b>${date}</b> ｜ 共 ${trains.length} 趟</div>`;
+
+  for(const t of trains){
+    const okClass = (t.has || t.alternatives.length) ? "ok" : "";
+    let badge;
+    if(t.has) badge = `<span class="badge direct">直达有票</span>`;
+    else if(t.alternatives.length) badge = `<span class="badge ext">买长乘短 ${t.alternatives.length} 个方案</span>`;
+    else badge = `<span class="badge none">无票</span>`;
+
+    html += `<div class="train ${okClass}">
+      <div class="train-head">
+        <span class="train-name">${t.train_name}</span>
+        <span class="time">${t.from_name} ${t.from_time} → ${t.to_name} ${t.to_time}</span>
+        <span class="time">历时 ${t.duration}</span>
+        ${badge}
+      </div>`;
+
+    if(t.has){
+      html += `<div class="seats">${seatHtml(t.avail)}
+        ${bookBtn(t.from_name, t.from_code, t.to_name, t.to_code, date)}</div>`;
+    } else {
+      html += `<div class="seats" style="color:var(--gray);font-size:13px;">
+        直达无票，可候补：${hbBtn(t.from_name, t.from_code, t.to_name, t.to_code, date)}</div>`;
+    }
+
+    if(t.alternatives.length){
+      html += `<div class="alts">`;
+      for(const a of t.alternatives){
+        html += `<div class="alt">
+          <span class="label">${a.label}</span>
+          <span class="route">${a.from_name} ${a.from_time} → ${a.to_name} ${a.to_time}</span>
+          ${seatHtml(a.avail)}
+          ${bookBtn(a.from_name, a.from_code, a.to_name, a.to_code, date, true)}
+        </div>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+</script>
+</body>
+</html>
