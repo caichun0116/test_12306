@@ -65,7 +65,10 @@
       "Bash(curl -s -X POST http://127.0.0.1:5099/api/order-url -H \"Content-Type: application/json\" -d '{\"from\":\"北京\",\"to\":\"\",\"date\":\"2026-07-01\"}')",
       "Bash(curl -s -X POST http://127.0.0.1:5099/api/order-url -H \"Content-Type: application/json\" -d '{\"from\":\"火星\",\"to\":\"上海\",\"date\":\"2026-07-01\"}')",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('ticket.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
-      "Bash(python3 -c \"import ticket; print\\('import OK'\\); print\\('helpers:', hasattr\\(ticket,'_alt_segments'\\), hasattr\\(ticket,'_RATE'\\), ticket.MAX_WORKERS\\)\")"
+      "Bash(python3 -c \"import ticket; print\\('import OK'\\); print\\('helpers:', hasattr\\(ticket,'_alt_segments'\\), hasattr\\(ticket,'_RATE'\\), ticket.MAX_WORKERS\\)\")",
+      "Bash(git clean *)",
+      "Bash(/bin/ls -la)",
+      "Bash(grep -vE '^$')"
     ]
   }
 }

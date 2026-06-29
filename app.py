@@ -16,6 +16,7 @@ from flask import Flask, request, jsonify, render_template
 
 import ticket
 import notify
+from monitor_service import MANAGER
 
 app = Flask(__name__)
 
@@ -44,11 +45,8 @@ def _build_order_url(from_name: str, to_name: str, date: str):
     if not to_code:
         return None, f"未找到到达站「{to_name}」"
 
-    url = (
-        "https://kyfw.12306.cn/otn/leftTicket/init"
-        f"?linktypeid=dc&fs={from_label},{from_code}&ts={to_label},{to_code}"
-        f"&date={date}&flag=N,N,Y"
-    )
+    # 与前端 bookUrl()、monitor 共用 ticket.book_url()
+    url = ticket.book_url(from_label, from_code, to_label, to_code, date)
     return url, ""
 
 
@@ -74,6 +72,12 @@ def api_query():
     seat_types  = data.get("seat_types") or list(ticket.SEAT_INDEX.keys())  # 不选 = 全部
     train_names = data.get("train_names") or []
     extend      = int(data.get("extend", 1))
+    with_price  = bool(data.get("with_price"))
+    price_max   = data.get("price_max")
+    try:
+        price_max = float(price_max) if price_max not in (None, "", "null") else None
+    except (TypeError, ValueError):
+        price_max = None
 
     if not from_name or not to_name or not date:
         return jsonify({"ok": False, "error": "请填写出发地、目的地和日期"})
@@ -88,8 +92,25 @@ def api_query():
         extend=max(0, min(extend, 5)),
         # 站数越多，需要查询的延伸区段组合越多，相应放宽查询预算
         max_extend_queries=60 + max(0, min(extend, 5)) * 30,
+        with_price=with_price,
+        price_max=price_max,
     )
     return jsonify(result)
+
+
+@app.route("/api/price", methods=["POST"])
+def api_price():
+    """按需查询单趟车某区段票价（前端懒加载补拉用，结果服务端缓存）。"""
+    data = request.get_json(silent=True) or {}
+    train_no  = (data.get("train_no") or "").strip()
+    no_from   = (data.get("no_from") or "").strip()
+    no_to     = (data.get("no_to") or "").strip()
+    seat_code = (data.get("seat_code") or "").strip()
+    date      = (data.get("date") or "").strip()
+    pairs = ticket.query_price(train_no, no_from, no_to, seat_code, date)
+    if not pairs:
+        return jsonify({"ok": False, "error": "未取到票价（12306 限流，稍后再试）"})
+    return jsonify({"ok": True, "prices": {name: price for name, price in pairs}})
 
 
 @app.route("/api/order-url", methods=["POST"])
@@ -119,6 +140,58 @@ def api_notify():
         return jsonify({"ok": False, "error": "请先配置推送渠道和 token"})
     ok, msg = notify.push_message(channel, token, title, body, url, items=items)
     return jsonify({"ok": ok, "error": "" if ok else (msg or "推送失败")})
+
+
+# ──────────────────────────────────────────
+# 服务端常驻监控（关掉网页也继续跑）
+# ──────────────────────────────────────────
+
+@app.route("/api/monitor/create", methods=["POST"])
+def api_monitor_create():
+    data = request.get_json(silent=True) or {}
+    from_name = (data.get("from") or "").strip()
+    to_name   = (data.get("to") or "").strip()
+    dates     = [d for d in (data.get("dates") or []) if d]
+    if not from_name or not to_name or not dates:
+        return jsonify({"ok": False, "error": "请填写出发地、目的地和至少一个日期"})
+    if not _resolve_station(from_name)[0]:
+        return jsonify({"ok": False, "error": f"未找到出发站「{from_name}」"})
+    if not _resolve_station(to_name)[0]:
+        return jsonify({"ok": False, "error": f"未找到到达站「{to_name}」"})
+    channel = (data.get("channel") or "").strip()
+    token   = (data.get("token") or "").strip()
+    if not channel or not token:
+        return jsonify({"ok": False, "error": "服务端监控需先配置微信推送（渠道 + token）"})
+
+    job = MANAGER.create(data)
+    return jsonify({"ok": True, "id": job.id, "job": job.summary()})
+
+
+@app.route("/api/monitor/list")
+def api_monitor_list():
+    return jsonify({"ok": True, "jobs": MANAGER.list()})
+
+
+@app.route("/api/monitor/<jid>")
+def api_monitor_detail(jid):
+    job = MANAGER.get(jid)
+    if not job:
+        return jsonify({"ok": False, "error": "任务不存在"})
+    return jsonify({"ok": True, "job": job.detail()})
+
+
+@app.route("/api/monitor/stop", methods=["POST"])
+def api_monitor_stop():
+    jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
+    ok = MANAGER.stop(jid)
+    return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
+
+
+@app.route("/api/monitor/delete", methods=["POST"])
+def api_monitor_delete():
+    jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
+    ok = MANAGER.delete(jid)
+    return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 
 if __name__ == "__main__":

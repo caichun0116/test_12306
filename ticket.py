@@ -41,6 +41,21 @@ SEAT_INDEX = {
     "无座":     26,
 }
 
+# 座位类型 → 官方 queryTicketPrice 返回里的价格字段 key（按顺序尝试，命中即用）
+# 实测响应含 A9/M/O/WZ 等 key，值形如 "¥598.0"。
+PRICE_KEY = {
+    "商务座":   ("A9", "9"),
+    "一等座":   ("M",),
+    "二等座":   ("O",),
+    "高级软卧": ("A6",),
+    "软卧":     ("A4",),
+    "动卧":     ("F",),
+    "硬卧":     ("A3",),
+    "软座":     ("A2",),
+    "硬座":     ("A1",),
+    "无座":     ("WZ",),
+}
+
 # 车次类型 → 车次名首字母前缀
 TRAIN_TYPE_PREFIX = {
     "GC": ("G", "C"),   # 高铁 / 城际
@@ -103,6 +118,8 @@ class _RateGate:
 
 
 _RATE = _RateGate(_MIN_INTERVAL)
+# 票价接口（queryTicketPrice）对非登录会话限流更严，单独用更慢的闸门
+_PRICE_RATE = _RateGate(0.5)
 
 
 # ──────────────────────────────────────────
@@ -219,6 +236,9 @@ def query_tickets(from_code: str, to_code: str, date: str) -> list[dict]:
             "from_time":    cols[8],
             "to_time":      cols[9],
             "duration":     cols[10],
+            "no_from":      cols[16],          # 车次内出发站序号（查票价用）
+            "no_to":        cols[17],          # 车次内到达站序号（查票价用）
+            "seat_code":    cols[35] if len(cols) > 35 else "",  # 座位类型代码串（查票价用）
             "seats":        seats,
         })
     return trains
@@ -250,6 +270,105 @@ def query_stops(train_no: str, from_code: str, to_code: str, date: str) -> tuple
 
     stops = data.get("data", {}).get("data", [])
     return tuple(s.get("station_name", "") for s in stops if s.get("station_name"))
+
+
+# ──────────────────────────────────────────
+# 查询票价
+# ──────────────────────────────────────────
+
+# 票价在整个售票周期内稳定，手写缓存：只缓存「成功」结果，
+# 避免把限流导致的空结果永久缓存（lru_cache 会缓存失败，故不用）。
+_PRICE_CACHE: dict[tuple, tuple] = {}
+_PRICE_LOCK = threading.Lock()
+
+
+def query_price(train_no: str, no_from: str, no_to: str,
+                seat_code: str, date: str) -> tuple:
+    """
+    返回某车次某区段的票价 (tuple of (座位名, 价格float)，便于缓存)。
+    首轮付费、监控后续轮命中缓存免费。失败返回空 tuple（不缓存，下轮可重试）。
+    """
+    if not (train_no and no_from and no_to and seat_code):
+        return ()
+    key = (train_no, no_from, no_to, seat_code, date)
+    with _PRICE_LOCK:
+        hit = _PRICE_CACHE.get(key)
+    if hit is not None:
+        return hit
+
+    url = "https://kyfw.12306.cn/otn/leftTicket/queryTicketPrice"
+    params = {
+        "train_no": train_no,
+        "from_station_no": no_from,
+        "to_station_no": no_to,
+        "seat_types": seat_code,
+        "train_date": date,
+    }
+    # 价格接口偶发返回空（限流）：失败时重新预热再试一次
+    for attempt in range(2):
+        _warmup()
+        try:
+            resp = SESSION.get(url, params=params, timeout=12)
+            resp.raise_for_status()
+            data = resp.json()
+        except (requests.RequestException, json.JSONDecodeError):
+            data = None
+
+        prices = (data or {}).get("data") if isinstance(data, dict) else None
+        if isinstance(prices, dict) and prices:
+            out = []
+            for seat_name, keys in PRICE_KEY.items():
+                for k in keys:
+                    val = _parse_price(prices.get(k))
+                    if val is not None:
+                        out.append((seat_name, val))
+                        break
+            result = tuple(out)
+            if result:                       # 只缓存成功结果
+                with _PRICE_LOCK:
+                    _PRICE_CACHE[key] = result
+                return result
+        # 空结果：标记需要重新预热，下一次尝试前 _warmup 会重新种 Cookie
+        _WARMED["done"] = False
+    return ()
+
+
+def _parse_price(raw) -> float | None:
+    """'¥598.0' / '598.0' / 59800(分) → 598.0；无法解析返回 None。"""
+    if raw in (None, "", "--"):
+        return None
+    s = str(raw).strip().lstrip("¥￥").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def price_map(train: dict, date: str) -> dict:
+    """对一趟车（query_tickets 的元素）查票价，返回 {座位名: 价格float}。"""
+    pairs = query_price(train.get("train_no", ""), train.get("no_from", ""),
+                        train.get("no_to", ""), train.get("seat_code", ""), date)
+    return dict(pairs)
+
+
+# ──────────────────────────────────────────
+# 12306 官方下单/候补深链
+# ──────────────────────────────────────────
+
+def book_url(from_name: str, from_code: str,
+             to_name: str, to_code: str, date: str) -> str:
+    """生成 12306 官方查票/下单页深链（已登录则直接进登录态）。
+
+    注意：fs/ts 必须用「站名,代码」字面逗号，逗号不能被编码，否则 12306 识别不了。
+    与前端 bookUrl()、app._build_order_url() 同构，三处共用。
+    """
+    if not (from_code and to_code and date):
+        return ""
+    return (
+        "https://kyfw.12306.cn/otn/leftTicket/init"
+        f"?linktypeid=dc&fs={from_name},{from_code}&ts={to_name},{to_code}"
+        f"&date={date}&flag=N,N,Y"
+    )
 
 
 # ──────────────────────────────────────────
@@ -295,7 +414,8 @@ def match_train_type(train_name: str, train_types: list[str]) -> bool:
 def search(from_name: str, to_name: str, date: str,
            train_types: list[str], seat_types: list[str],
            extend: int = 1, max_extend_queries: int = 40,
-           train_names: list[str] | None = None) -> dict:
+           train_names: list[str] | None = None,
+           with_price: bool = False, price_max: float | None = None) -> dict:
     """
     返回：
     {
@@ -303,6 +423,7 @@ def search(from_name: str, to_name: str, date: str,
       "from": from_name, "to": to_name, "date": date,
       "trains": [
          {... 车次基本信息, "seats", "has",            # 直达是否有票
+          "avail": [{type,count,price?}], "price_min"?,
           "alternatives": [ {from_name,to_name,from_time,to_time,
                              avail:[{type,count}], label} ] }
       ]
@@ -343,6 +464,10 @@ def search(from_name: str, to_name: str, date: str,
             "from_time":  t["from_time"],
             "to_time":    t["to_time"],
             "duration":   t["duration"],
+            # 票价按需查询所需字段（供前端 /api/price 懒加载补拉）
+            "no_from":    t["no_from"],
+            "no_to":      t["no_to"],
+            "seat_code":  t["seat_code"],
             "avail":      avail_summary(t["seats"], seat_types),
             "has":        has,
             "alternatives": [],
@@ -403,8 +528,42 @@ def search(from_name: str, to_name: str, date: str,
                     "label":     label,
                 })
 
+    # ── 票价（仅直达车次，可选）──
+    # lru_cache 保证监控重复轮免费；并发拉取 + 全局限速闸门防风控。
+    # ── 票价（仅直达车次，可选；best-effort）──
+    # 价格接口限流严，用更慢的专用闸门尽力拉取；缓存成功结果，
+    # 监控后续轮 / 重查命中缓存免费，宽泛路线拉不全的由前端按需补拉。
+    if (with_price or price_max is not None) and entries:
+        def fetch_price(e):
+            _PRICE_RATE.wait()
+            return price_map(e["_raw"], date)
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            price_list = list(ex.map(fetch_price, entries))
+        for e, pm in zip(entries, price_list):
+            prices = []
+            for s in e["avail"]:
+                p = pm.get(s["type"])
+                if p is not None:
+                    s["price"] = p
+                    prices.append(p)
+            if prices:
+                e["price_min"] = min(prices)
+
     for e in entries:
         e.pop("_raw", None)
+
+    # ── 价格上限过滤（仅作用于有票车次）──
+    # 价格未知（限流未拉到）的车次保留，避免误删；只过滤已知且超价的。
+    if price_max is not None:
+        kept = []
+        for e in entries:
+            if not e["has"] or "price_min" not in e:
+                kept.append(e)
+                continue
+            if any(s.get("price") is not None and s["price"] <= price_max
+                   for s in e["avail"]):
+                kept.append(e)
+        entries = kept
 
     return {"ok": True, "from": from_name, "to": to_name, "date": date,
             "from_code": from_code, "to_code": to_code,
