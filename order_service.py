@@ -175,6 +175,9 @@ class OrderJob:
             "last_check": self.last_check, "last_error": self.last_error,
             "last_msg": self.last_msg, "order_info": self.order_info,
             "created": self.created,
+            # 供管理员视图区分任务归属（短会话码 + 12306 账号名）
+            "owner": (self.owner or "")[:6],
+            "account": getattr(self.login, "username", "") or "",
         }
 
     def detail(self) -> dict:
@@ -270,7 +273,8 @@ class OrderJob:
         if self.login is None:
             self.last_error = "登录会话已失效，请重新扫码登录后新建任务"
             return False
-        self.login.touch()   # 保活：有运行任务的会话不会被注册表空闲驱逐
+        # 注意：不在这里 touch 会话——「人是否在」要看浏览器真实请求，任务自己跑
+        # 不算。否则空闲驱逐永远不触发，开了任务就走人的情况就停不掉。
         if not self.login.logged_in:
             # 登录失效：复验一次
             if not self.login.check_online():
@@ -479,40 +483,57 @@ class OrderManager:
         job.start()
         return job
 
-    def list(self, owner: str = "") -> list:
+    def list(self, owner: str = "", admin: bool = False) -> list:
         with self._lock:
-            jobs = [j for j in self._jobs.values() if j.owner == owner]
+            jobs = [j for j in self._jobs.values() if admin or j.owner == owner]
         return [j.summary() for j in jobs]
 
-    def get(self, jid: str, owner: str = "") -> OrderJob | None:
+    def get(self, jid: str, owner: str = "", admin: bool = False) -> OrderJob | None:
         with self._lock:
             job = self._jobs.get(jid)
-        if job and job.owner == owner:
+        if job and (admin or job.owner == owner):
             return job
         return None
 
-    def start(self, jid: str, owner: str = "") -> bool:
-        job = self.get(jid, owner)
+    def start(self, jid: str, owner: str = "", admin: bool = False) -> bool:
+        job = self.get(jid, owner, admin)
         if not job or job.status == "done":
             return False
         job.start()
         return True
 
-    def stop(self, jid: str, owner: str = "") -> bool:
-        job = self.get(jid, owner)
+    def stop(self, jid: str, owner: str = "", admin: bool = False) -> bool:
+        job = self.get(jid, owner, admin)
         if not job:
             return False
         job.stop()
         return True
 
-    def delete(self, jid: str, owner: str = "") -> bool:
-        job = self.get(jid, owner)
+    def delete(self, jid: str, owner: str = "", admin: bool = False) -> bool:
+        job = self.get(jid, owner, admin)
         if not job:
             return False
         job.stop()
         with self._lock:
             self._jobs.pop(jid, None)
         return True
+
+    def stop_owner(self, owner: str) -> int:
+        """停止某会话名下所有任务（保留在列表，登出用）。返回停掉的数量。"""
+        with self._lock:
+            jobs = [j for j in self._jobs.values() if j.owner == owner]
+        for j in jobs:
+            j.stop()
+        return len(jobs)
+
+    def purge_owner(self, owner: str) -> int:
+        """停止并移除某会话名下所有任务（空闲驱逐用，释放内存）。"""
+        with self._lock:
+            ids = [jid for jid, j in self._jobs.items() if j.owner == owner]
+            jobs = [self._jobs.pop(jid) for jid in ids]
+        for j in jobs:
+            j.stop()
+        return len(jobs)
 
 
 # 进程内单例

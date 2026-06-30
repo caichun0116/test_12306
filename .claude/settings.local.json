@@ -86,7 +86,17 @@
       "Bash(./.venv/bin/python -m py_compile order12306.py)",
       "Bash(./.venv/bin/python -)",
       "Bash(grep -iE 'session|jobs|cookie|\\\\.json$')",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(git check-ignore *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(pkill -f 'app.py')",
+      "Bash(APP_TOKEN='apptok123' ADMIN_TOKEN='admintok999' PORT=5096 HOST=127.0.0.1 LOGIN_IDLE_TTL=3 .venv/bin/python app.py)",
+      "Bash(curl -s -c /tmp/a.txt -b /tmp/a.txt -H 'X-App-Token: apptok123' -H 'Content-Type: application/json' -d '{\"from\":\"北京\",\"to\":\"上海\",\"dates\":[\"2026-07-10\"],\"channel\":\"pushplus\",\"token\":\"t\"}' __TRACKED_VAR__/api/monitor/create)",
+      "Bash(python3 -c \"import sys,json;print\\(json.load\\(sys.stdin\\)\\)\")",
+      "Bash(awk '{print $1, $NF}')",
+      "Bash(bash -n share.sh)",
+      "Bash(bash -n start.sh)"
     ]
   }
 }

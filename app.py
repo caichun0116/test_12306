@@ -12,9 +12,11 @@
 
 import os
 import hmac
+import time
 import hashlib
 import json
 import secrets
+import threading
 import subprocess
 import urllib.error
 import urllib.request
@@ -30,9 +32,13 @@ from order_service import MANAGER as ORDER_MANAGER
 app = Flask(__name__)
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _PASSENGER_KEY_SALT = os.environ.get("PASSENGER_KEY_SALT") or os.urandom(16).hex()
-# 共享 Token 鉴权：所有非首页/静态接口都需带 X-App-Token。
+# 共享 Token 鉴权：所有非首页/静态接口都需带 X-App-Token（入场票，谁能进服务器）。
 _APP_TOKEN_FILE = os.path.join(_BASE_DIR, ".app_token")
+# 管理员令牌：带正确 X-Admin-Token 的请求可查看/停止/删除所有人的任务。
+_ADMIN_TOKEN_FILE = os.path.join(_BASE_DIR, ".admin_token")
 _LOCAL_ADDRS = {"127.0.0.1", "::1"}
+# 会话空闲多久（秒）无任何浏览器请求就驱逐：连带停掉其名下抢票/监控任务
+_IDLE_TTL = max(60, int(os.environ.get("LOGIN_IDLE_TTL", "1800") or "1800"))
 _CHROME_DEBUG_URL = "http://127.0.0.1:9222"
 _CHROME_PROFILE_DIR = "/tmp/qp-chrome-12306"
 _OFFICIAL_LOGIN_URL = "https://kyfw.12306.cn/otn/resources/login.html"
@@ -50,29 +56,37 @@ def _write_secret_file(path: str, value: str) -> None:
         pass
 
 
-def _load_app_token() -> tuple[str, str]:
-    env_token = (os.environ.get("APP_TOKEN") or "").strip()
+def _load_token(env_name: str, path: str) -> tuple[str, str]:
+    """通用令牌加载：env 优先，否则读/生成令牌文件（0600）。返回 (token, source)。"""
+    env_token = (os.environ.get(env_name) or "").strip()
     if env_token:
         return env_token, "env"
     try:
-        if os.path.exists(_APP_TOKEN_FILE):
+        if os.path.exists(path):
             try:
-                os.chmod(_APP_TOKEN_FILE, 0o600)
+                os.chmod(path, 0o600)
             except OSError:
                 pass
-            with open(_APP_TOKEN_FILE, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 token = f.read().strip()
             if token:
                 return token, "file"
         token = secrets.token_urlsafe(24)
-        _write_secret_file(_APP_TOKEN_FILE, token)
+        _write_secret_file(path, token)
         return token, "generated"
     except OSError:
-        # 极端情况下无法写令牌文件时才回退本机来源限制。
         return "", "none"
 
 
-_APP_TOKEN, _APP_TOKEN_SOURCE = _load_app_token()
+_APP_TOKEN, _APP_TOKEN_SOURCE = _load_token("APP_TOKEN", _APP_TOKEN_FILE)
+_ADMIN_TOKEN, _ADMIN_TOKEN_SOURCE = _load_token("ADMIN_TOKEN", _ADMIN_TOKEN_FILE)
+
+
+def is_admin() -> bool:
+    """请求是否带正确的管理员令牌。"""
+    if not _ADMIN_TOKEN:
+        return False
+    return hmac.compare_digest(request.headers.get("X-Admin-Token", ""), _ADMIN_TOKEN)
 
 
 def _load_flask_secret() -> str:
@@ -112,6 +126,7 @@ def _ensure_sid() -> str:
         sid = secrets.token_urlsafe(16)
         session["sid"] = sid
         session.permanent = True
+    _touch_session(sid)      # 每次真实请求都刷新「人还在」的活跃时间
     return sid
 
 
@@ -122,6 +137,47 @@ def current_sid() -> str:
 def current_login():
     """返回当前浏览器会话对应的 12306 登录态（懒创建）。"""
     return order12306.REGISTRY.get_or_create(current_sid())
+
+
+# ── 会话活跃度 + 空闲驱逐 ──
+# 「人是否还在」以浏览器最近一次请求为准（任务自己在后台跑不算）。会话空闲超过
+# _IDLE_TTL 就驱逐：停掉并移除其名下抢票/监控任务，丢弃其登录态，避免开了任务
+# 就走人后无人看管地一直跑。
+_SESSION_SEEN: dict[str, float] = {}
+_SESSION_LOCK = threading.Lock()
+
+
+def _touch_session(sid: str):
+    if not sid:
+        return
+    with _SESSION_LOCK:
+        _SESSION_SEEN[sid] = time.monotonic()
+
+
+def _evict_session(sid: str):
+    """驱逐一个会话：停+移除其任务，丢弃登录态。"""
+    try:
+        ORDER_MANAGER.purge_owner(sid)
+        MANAGER.purge_owner(sid)
+        order12306.REGISTRY.drop(sid)
+    finally:
+        with _SESSION_LOCK:
+            _SESSION_SEEN.pop(sid, None)
+
+
+def _session_sweep_loop():
+    while True:
+        time.sleep(60)
+        now = time.monotonic()
+        with _SESSION_LOCK:
+            stale = [sid for sid, t in _SESSION_SEEN.items()
+                     if now - t > _IDLE_TTL]
+        for sid in stale:
+            _evict_session(sid)
+
+
+threading.Thread(target=_session_sweep_loop, daemon=True,
+                 name="session-sweeper").start()
 
 
 def _resolve_station(value: str):
@@ -267,6 +323,13 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/session/ping", methods=["POST"])
+def api_session_ping():
+    """前端心跳：只要页面开着就定时调一次，刷新会话活跃时间（防被空闲驱逐）。
+    before_request 已刷新活跃时间，这里仅回执 + 告知是否管理员。"""
+    return jsonify({"ok": True, "admin": is_admin()})
+
+
 @app.route("/api/stations")
 def api_stations():
     """返回全部站名列表，供前端做输入联想。"""
@@ -381,12 +444,13 @@ def api_monitor_create():
 
 @app.route("/api/monitor/list")
 def api_monitor_list():
-    return jsonify({"ok": True, "jobs": MANAGER.list(owner=current_sid())})
+    return jsonify({"ok": True, "admin": is_admin(),
+                    "jobs": MANAGER.list(owner=current_sid(), admin=is_admin())})
 
 
 @app.route("/api/monitor/<jid>")
 def api_monitor_detail(jid):
-    job = MANAGER.get(jid, owner=current_sid())
+    job = MANAGER.get(jid, owner=current_sid(), admin=is_admin())
     if not job:
         return jsonify({"ok": False, "error": "任务不存在"})
     return jsonify({"ok": True, "job": job.detail()})
@@ -395,14 +459,14 @@ def api_monitor_detail(jid):
 @app.route("/api/monitor/stop", methods=["POST"])
 def api_monitor_stop():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = MANAGER.stop(jid, owner=current_sid())
+    ok = MANAGER.stop(jid, owner=current_sid(), admin=is_admin())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 
 @app.route("/api/monitor/delete", methods=["POST"])
 def api_monitor_delete():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = MANAGER.delete(jid, owner=current_sid())
+    ok = MANAGER.delete(jid, owner=current_sid(), admin=is_admin())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 
@@ -464,8 +528,11 @@ def api_order_login_check():
 
 @app.route("/api/order/logout", methods=["POST"])
 def api_order_logout():
+    sid = current_sid()
     current_login().clear()
-    return jsonify({"ok": True})
+    # 退出登录即停掉本会话名下还在跑的抢票任务（登录态已清，再跑也会失败）
+    stopped = ORDER_MANAGER.stop_owner(sid)
+    return jsonify({"ok": True, "stopped": stopped})
 
 
 @app.route("/api/order/passengers")
@@ -525,12 +592,13 @@ def api_order_create():
 
 @app.route("/api/order/list")
 def api_order_list():
-    return jsonify({"ok": True, "jobs": ORDER_MANAGER.list(owner=current_sid())})
+    return jsonify({"ok": True, "admin": is_admin(),
+                    "jobs": ORDER_MANAGER.list(owner=current_sid(), admin=is_admin())})
 
 
 @app.route("/api/order/<jid>")
 def api_order_detail(jid):
-    job = ORDER_MANAGER.get(jid, owner=current_sid())
+    job = ORDER_MANAGER.get(jid, owner=current_sid(), admin=is_admin())
     if not job:
         return jsonify({"ok": False, "error": "任务不存在"})
     return jsonify({"ok": True, "job": job.detail()})
@@ -539,21 +607,21 @@ def api_order_detail(jid):
 @app.route("/api/order/stop", methods=["POST"])
 def api_order_stop():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = ORDER_MANAGER.stop(jid, owner=current_sid())
+    ok = ORDER_MANAGER.stop(jid, owner=current_sid(), admin=is_admin())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 
 @app.route("/api/order/start", methods=["POST"])
 def api_order_start():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = ORDER_MANAGER.start(jid, owner=current_sid())
+    ok = ORDER_MANAGER.start(jid, owner=current_sid(), admin=is_admin())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在或已完成"})
 
 
 @app.route("/api/order/delete", methods=["POST"])
 def api_order_delete():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = ORDER_MANAGER.delete(jid, owner=current_sid())
+    ok = ORDER_MANAGER.delete(jid, owner=current_sid(), admin=is_admin())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 
@@ -562,7 +630,10 @@ if __name__ == "__main__":
     port  = int(os.environ.get("PORT", "5001"))
     debug = os.environ.get("FLASK_DEBUG") == "1"
     if _APP_TOKEN and _APP_TOKEN_SOURCE != "env":
-        print("🔑 访问令牌（页面右上角「令牌」填入）：", flush=True)
+        print("🔑 访问令牌（分享给访客，页面右上角「令牌」填入）：", flush=True)
         print(f"   {_APP_TOKEN}", flush=True)
+    if _ADMIN_TOKEN and _ADMIN_TOKEN_SOURCE != "env":
+        print("🛠 管理员令牌（只给你自己，可查看/停止所有人的任务）：", flush=True)
+        print(f"   {_ADMIN_TOKEN}", flush=True)
     # threaded=True：允许多人同时查询，避免一个人的延伸查询把别人卡住
     app.run(host=host, port=port, debug=debug, threaded=True)

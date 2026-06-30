@@ -65,6 +65,10 @@ echo "🌍 正在生成公网网址（下面那条 https://xxxx.trycloudflare.co
 echo "   ⚠️  此网址临时有效：本窗口关闭 / 按 Ctrl+C 后即失效"
 echo "🔑 访问令牌（必须连同网址一起给对方；打开页面点右上角「令牌」填入）："
 echo "      $APP_TOKEN"
+if [ -s .admin_token ]; then
+  echo "🛠 管理员令牌（只留给你自己，点右上角「管理员」填入，可查看/停止所有人的任务）："
+  echo "      $(cat .admin_token)"
+fi
 echo "──────────────────────────────────────────────"
 
 # 6. 前台运行隧道（它会打印公网网址）

@@ -90,6 +90,7 @@ class Job:
             "status": self.status, "cycle": self.cycle,
             "last_check": self.last_check, "last_error": self.last_error,
             "found_count": len(self.found_log), "created": self.created,
+            "owner": (self.owner or "")[:6],   # 管理员视图区分归属
         }
 
     def detail(self) -> dict:
@@ -247,33 +248,42 @@ class MonitorManager:
         job.start()
         return job
 
-    def list(self, owner: str = "") -> list:
+    def list(self, owner: str = "", admin: bool = False) -> list:
         with self._lock:
-            jobs = [j for j in self._jobs.values() if j.owner == owner]
+            jobs = [j for j in self._jobs.values() if admin or j.owner == owner]
         return [j.summary() for j in jobs]
 
-    def get(self, jid: str, owner: str = "") -> Job | None:
+    def get(self, jid: str, owner: str = "", admin: bool = False) -> Job | None:
         with self._lock:
             job = self._jobs.get(jid)
-        if job and job.owner == owner:
+        if job and (admin or job.owner == owner):
             return job
         return None
 
-    def stop(self, jid: str, owner: str = "") -> bool:
-        job = self.get(jid, owner)
+    def stop(self, jid: str, owner: str = "", admin: bool = False) -> bool:
+        job = self.get(jid, owner, admin)
         if not job:
             return False
         job.stop()
         return True
 
-    def delete(self, jid: str, owner: str = "") -> bool:
-        job = self.get(jid, owner)
+    def delete(self, jid: str, owner: str = "", admin: bool = False) -> bool:
+        job = self.get(jid, owner, admin)
         if not job:
             return False
         job.stop()
         with self._lock:
             self._jobs.pop(jid, None)
         return True
+
+    def purge_owner(self, owner: str) -> int:
+        """停止并移除某会话名下所有监控任务（空闲驱逐用）。"""
+        with self._lock:
+            ids = [jid for jid, j in self._jobs.items() if j.owner == owner]
+            jobs = [self._jobs.pop(jid) for jid in ids]
+        for j in jobs:
+            j.stop()
+        return len(jobs)
 
 
 # 进程内单例

@@ -176,11 +176,18 @@
 <header>
   <h1>🚄 12306 余票查询 · 买长乘短</h1>
   <p>直达没票时，自动尝试同一车次「提前一站上车 / 延后一站下车」的余票</p>
-  <button id="appTokenBtn" type="button"
-          style="position:absolute; top:12px; right:14px; background:rgba(255,255,255,.18);
-                 color:#fff; border:1px solid rgba(255,255,255,.4); border-radius:8px;
-                 padding:4px 10px; font-size:13px; cursor:pointer;"
-          title="设置访问令牌（对外分享时服务端需配置 APP_TOKEN）">🔑 令牌</button>
+  <div style="position:absolute; top:12px; right:14px; display:flex; gap:8px;">
+    <button id="adminTokenBtn" type="button"
+            style="background:rgba(255,255,255,.18); color:#fff;
+                   border:1px solid rgba(255,255,255,.4); border-radius:8px;
+                   padding:4px 10px; font-size:13px; cursor:pointer;"
+            title="管理员令牌：可查看并停止/删除所有人的任务">🛠 管理员</button>
+    <button id="appTokenBtn" type="button"
+            style="background:rgba(255,255,255,.18); color:#fff;
+                   border:1px solid rgba(255,255,255,.4); border-radius:8px;
+                   padding:4px 10px; font-size:13px; cursor:pointer;"
+            title="设置访问令牌（对外分享时服务端需配置 APP_TOKEN）">🔑 令牌</button>
+  </div>
 </header>
 
 <div class="wrap">
@@ -517,8 +524,11 @@ function escHtml(s){
 // 必须在第一个 fetch() 之前打补丁，覆盖全站所有调用，无需逐个改。
 // ──────────────────────────────────────────
 const APP_TOKEN_KEY = "qp_app_token_v1";
+const ADMIN_TOKEN_KEY = "qp_admin_token_v1";
 function getAppToken(){ try { return localStorage.getItem(APP_TOKEN_KEY) || ""; } catch(_){ return ""; } }
 function setAppToken(v){ try { localStorage.setItem(APP_TOKEN_KEY, v || ""); } catch(_){} }
+function getAdminToken(){ try { return localStorage.getItem(ADMIN_TOKEN_KEY) || ""; } catch(_){ return ""; } }
+function setAdminToken(v){ try { localStorage.setItem(ADMIN_TOKEN_KEY, v || ""); } catch(_){} }
 (function patchFetch(){
   const orig = window.fetch.bind(window);
   window.fetch = function(input, init){
@@ -526,12 +536,13 @@ function setAppToken(v){ try { localStorage.setItem(APP_TOKEN_KEY, v || ""); } c
               : (input && input.url) || "";
     const sameOrigin = url.startsWith("/") || url.startsWith(location.origin);
     if (sameOrigin) {
-      const tok = getAppToken();
-      if (tok) {
+      const tok = getAppToken(), adm = getAdminToken();
+      if (tok || adm) {
         const base = init || {};
         const h = new Headers(base.headers ||
           (typeof input !== "string" && input.headers) || {});
-        h.set("X-App-Token", tok);
+        if (tok) h.set("X-App-Token", tok);
+        if (adm) h.set("X-Admin-Token", adm);   // 管理员令牌：可控所有人的任务
         init = Object.assign({}, base, {headers: h});
       }
     }
@@ -545,16 +556,29 @@ function setAppToken(v){ try { localStorage.setItem(APP_TOKEN_KEY, v || ""); } c
   };
 })();
 
+// 心跳：只要页面开着就定时刷新会话活跃时间，避免被空闲驱逐（关掉网页才会停任务）
+setInterval(()=>{ fetch("/api/session/ping", {method:"POST"}).catch(()=>{}); }, 60000);
+
 // 令牌设置按钮：填写后存 localStorage，后续请求自动带上
 document.addEventListener("DOMContentLoaded", ()=>{
   const btn = byId("appTokenBtn");
-  if (!btn) return;
-  const sync = ()=>{ btn.textContent = getAppToken() ? "🔑 已设令牌" : "🔑 令牌"; };
-  sync();
-  btn.addEventListener("click", ()=>{
-    const t = prompt("访问令牌（与服务端 APP_TOKEN 一致；仅本机使用可留空）：", getAppToken());
-    if (t !== null) { setAppToken(t.trim()); sync(); }
-  });
+  if (btn) {
+    const sync = ()=>{ btn.textContent = getAppToken() ? "🔑 已设令牌" : "🔑 令牌"; };
+    sync();
+    btn.addEventListener("click", ()=>{
+      const t = prompt("访问令牌（与服务端 APP_TOKEN 一致；仅本机使用可留空）：", getAppToken());
+      if (t !== null) { setAppToken(t.trim()); sync(); }
+    });
+  }
+  const adminBtn = byId("adminTokenBtn");
+  if (adminBtn) {
+    const sync = ()=>{ adminBtn.textContent = getAdminToken() ? "🛠 管理员✓" : "🛠 管理员"; };
+    sync();
+    adminBtn.addEventListener("click", ()=>{
+      const t = prompt("管理员令牌（与服务端 ADMIN_TOKEN 一致，可查看/停止所有人的任务；留空则退出管理员）：", getAdminToken());
+      if (t !== null) { setAdminToken(t.trim()); sync(); if (typeof refreshJobLists==="function") refreshJobLists(); }
+    });
+  }
 });
 
 // 顶部 tab：查询和抢票下单相互隔离
@@ -1321,10 +1345,12 @@ function srvJobHtml(j){
   const statusText = {running:"监控中", stopped:"已停止", error:"出错"}[j.status] || j.status;
   const stopBtn = j.status==="running"
     ? `<button class="jbtn" data-stop="${j.id}">停止</button>` : "";
+  const owner = j.owner ? `<span class="jmeta" style="color:#7c3aed;">👤 ${escHtml(j.owner)}</span>` : "";
   return `<div class="srv-job" data-id="${j.id}">
     <div class="jhead">
       <span class="sdot ${j.status}"></span>
       <span class="jroute">${j.route}</span>
+      ${owner}
       <span class="jmeta">${dates} · ${seats}${names}${price} · 每 ${j.interval}s</span>
       <span class="jbtns">
         <button class="jbtn" data-view="${j.id}">查看最近结果</button>
@@ -1699,10 +1725,14 @@ function orderJobHtml(j){
   const startBtn = (j.status==="stopped" || j.status==="error")
     ? `<button class="jbtn" data-ostart="${j.id}">继续</button>` : "";
   const info = j.order_info ? `<div class="jmeta" style="margin-top:6px;color:#166534;">🎉 ${j.order_info}</div>` : "";
+  // 管理员视图：显示任务归属（12306 账号名 / 会话短码）
+  const owner = (j.account || j.owner)
+    ? `<span class="jmeta" style="color:#7c3aed;">👤 ${escHtml(j.account||"")}${j.owner?` (${escHtml(j.owner)})`:""}</span>` : "";
   return `<div class="order-job" data-id="${j.id}">
     <div class="jhead">
       <span class="sdot ${j.status}"></span>
       <span class="jroute">${j.route}</span>
+      ${owner}
       <span class="jmeta">${dates} · ${seats}${ext} · 每 ${j.interval}s · 乘车人 ${names}</span>
       <span class="jbtns">
         <button class="jbtn" data-olog="${j.id}">日志</button>

@@ -774,27 +774,17 @@ class LoginSession:
 # 多用户：每个浏览器会话一份独立登录态（内存态，不落盘）
 # ──────────────────────────────────────────
 
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-
-# 空闲多久未使用就驱逐会话（秒）；有运行中抢票任务的会话每轮 tick 会 touch，不会被驱逐
-IDLE_TTL = max(60, _env_int("LOGIN_IDLE_TTL", 1800))
-_SWEEP_INTERVAL = 120
-
-
 class SessionRegistry:
-    """sid → LoginSession 的线程安全注册表，懒创建 + 空闲驱逐。"""
+    """sid → LoginSession 的线程安全注册表（懒创建）。
+
+    被动存储：不自带清扫线程。会话活跃度与空闲驱逐由 app 层统一管理
+    （因为「人是否在」要看浏览器真实请求，而不是登录态本身），驱逐时
+    app 会调用 drop(sid) 并连带停止该会话名下的任务。
+    """
 
     def __init__(self):
         self._sessions: dict[str, LoginSession] = {}
         self._lock = threading.Lock()
-        self._sweeper = threading.Thread(target=self._sweep_loop, daemon=True,
-                                         name="login-registry-sweeper")
-        self._sweeper.start()
 
     def get_or_create(self, sid: str) -> LoginSession:
         with self._lock:
@@ -807,24 +797,11 @@ class SessionRegistry:
 
     def get(self, sid: str) -> "LoginSession | None":
         with self._lock:
-            sess = self._sessions.get(sid)
-            if sess is not None:
-                sess.last_used = time.monotonic()
-            return sess
+            return self._sessions.get(sid)
 
     def drop(self, sid: str):
         with self._lock:
             self._sessions.pop(sid, None)
-
-    def _sweep_loop(self):
-        while True:
-            time.sleep(_SWEEP_INTERVAL)
-            now = time.monotonic()
-            with self._lock:
-                stale = [sid for sid, s in self._sessions.items()
-                         if now - s.last_used > IDLE_TTL]
-                for sid in stale:
-                    self._sessions.pop(sid, None)
 
 
 REGISTRY = SessionRegistry()
