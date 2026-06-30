@@ -118,59 +118,19 @@ class LoginSession:
         # check_online() 的短 TTL 缓存：避免前端轮询 / 每轮 tick 都打网络
         self._online_cache_val = False
         self._online_cache_at = 0.0
-        self._restore()
+        # 多用户：登录态只存内存、绝不落盘。last_used 供注册表做空闲驱逐。
+        self.last_used = time.monotonic()
 
-    # ── Cookie 持久化（敏感，整体加密落盘）──
+    def touch(self):
+        """标记会话被使用，避免被注册表的空闲清扫驱逐。"""
+        self.last_used = time.monotonic()
+
+    # ── Cookie 持久化：多用户运行时态，不落盘（保留方法名以兼容调用点）──
     def _save(self):
-        try:
-            payload = json.dumps({
-                "cookies": _dump_cookiejar(self.s.cookies),
-                "username": self.username,
-            }, ensure_ascii=False)
-            cryptobox.warn_if_plaintext("12306 登录 Cookie")
-            # 能加密则写 {"enc": "<密文>"}；否则降级明文（chmod 0600）
-            if cryptobox.available():
-                out = {"enc": cryptobox.encrypt_str(payload)}
-            else:
-                out = json.loads(payload)
-            write_json_atomic(_SESSION_FILE, out, indent=None, mode=0o600)
-        except OSError:
-            pass
+        return
 
     def _restore(self):
-        if not os.path.exists(_SESSION_FILE):
-            return
-        try:
-            with open(_SESSION_FILE, encoding="utf-8") as f:
-                raw = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return
-        legacy_plaintext = False
-        if isinstance(raw, dict) and raw.get("enc"):
-            dec = cryptobox.decrypt_str(raw["enc"])
-            if not dec:                 # 缺钥/缺库/损坏：视为未登录
-                return
-            try:
-                data = json.loads(dec)
-            except json.JSONDecodeError:
-                return
-        else:
-            data = raw                  # 旧明文格式（含 "cookies" 键）
-            legacy_plaintext = True
-        cookies = data.get("cookies") or {}
-        if cookies:
-            _load_cookies(self.s.cookies, cookies)
-            self.username = data.get("username", "")
-            # 旧明文 + 现在能加密：透明升级为加密落盘
-            if legacy_plaintext and cryptobox.available():
-                self._save()
-            # 恢复后后台异步校验，避免阻塞进程启动（断网/慢网时同步探活会卡住
-            # Flask 起服务）。初始保守置为未登录，后台探活成功后再翻转为 True；
-            # 在此之前的调用方（_tick / api_order_create / submit_order）都会在
-            # logged_in 为假时自行回退 check_online()，因此语义安全、可自愈。
-            self.logged_in = False
-            threading.Thread(target=self.check_online, kwargs={"force": True},
-                             daemon=True, name="login-restore-probe").start()
+        return
 
     def clear(self):
         with self._lock:
@@ -181,11 +141,7 @@ class LoginSession:
             # 登出后让缓存立即反映「未登录」，不被 30s 内的旧 True 掩盖
             self._online_cache_val = False
             self._online_cache_at = time.monotonic()
-        try:
-            if os.path.exists(_SESSION_FILE):
-                os.remove(_SESSION_FILE)
-        except OSError:
-            pass
+            self.last_used = time.monotonic()
 
     # ── 预热：访问登录页种基础 Cookie ──
     def _warm_login_page(self):
@@ -815,9 +771,67 @@ class LoginSession:
 
 
 # ──────────────────────────────────────────
-# 模块级单例（一个进程一个登录态）
+# 多用户：每个浏览器会话一份独立登录态（内存态，不落盘）
 # ──────────────────────────────────────────
-LOGIN = LoginSession()
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+# 空闲多久未使用就驱逐会话（秒）；有运行中抢票任务的会话每轮 tick 会 touch，不会被驱逐
+IDLE_TTL = max(60, _env_int("LOGIN_IDLE_TTL", 1800))
+_SWEEP_INTERVAL = 120
+
+
+class SessionRegistry:
+    """sid → LoginSession 的线程安全注册表，懒创建 + 空闲驱逐。"""
+
+    def __init__(self):
+        self._sessions: dict[str, LoginSession] = {}
+        self._lock = threading.Lock()
+        self._sweeper = threading.Thread(target=self._sweep_loop, daemon=True,
+                                         name="login-registry-sweeper")
+        self._sweeper.start()
+
+    def get_or_create(self, sid: str) -> LoginSession:
+        with self._lock:
+            sess = self._sessions.get(sid)
+            if sess is None:
+                sess = LoginSession()
+                self._sessions[sid] = sess
+            sess.last_used = time.monotonic()
+            return sess
+
+    def get(self, sid: str) -> "LoginSession | None":
+        with self._lock:
+            sess = self._sessions.get(sid)
+            if sess is not None:
+                sess.last_used = time.monotonic()
+            return sess
+
+    def drop(self, sid: str):
+        with self._lock:
+            self._sessions.pop(sid, None)
+
+    def _sweep_loop(self):
+        while True:
+            time.sleep(_SWEEP_INTERVAL)
+            now = time.monotonic()
+            with self._lock:
+                stale = [sid for sid, s in self._sessions.items()
+                         if now - s.last_used > IDLE_TTL]
+                for sid in stale:
+                    self._sessions.pop(sid, None)
+
+
+REGISTRY = SessionRegistry()
+
+# 兼容别名：CLI 工具（import_12306_cookies.py）与本机 owner 默认会话用这一个。
+# Web 请求一律走 REGISTRY.get_or_create(sid)，互不影响。
+LOGIN = REGISTRY.get_or_create("__default__")
 
 
 # ──────────────────────────────────────────

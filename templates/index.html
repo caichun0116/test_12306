@@ -345,8 +345,9 @@
 
   <section class="tab-panel" id="orderTab">
     <div class="order-warn">
-      ⚠️ <b>全自动占座</b>：扫码登录你自己的 12306 账号后，后台抢到票会<b>自动提交订单占座</b>，
-      你只需到 12306 App「未完成订单」里<b>付款</b>即可。登录态仅保存在<b>本机</b>，不上传任何服务器。
+      ⚠️ <b>全自动占座</b>：登录<b>你自己的</b> 12306 账号后，后台抢到票会<b>自动提交订单占座</b>，
+      你只需到 12306 App「未完成订单」里<b>付款</b>即可。每个浏览器各自独立登录、互不干扰；
+      登录态<b>只存在服务器内存、不落盘</b>，服务重启后需重新登录。
       接口为 12306 非公开接口，可能因风控/改版失效；请仅用于<b>本人</b>购票。
     </div>
 
@@ -367,7 +368,7 @@
           </div>
           <div class="mini-note">
             推荐流程：打开官方 12306 页面 → 用 12306 App 扫码确认 → 回到本页点「导入登录态」。
-            登录态只保存在本机，下次服务重启会自动恢复。
+            登录态只存在服务器内存、不落盘；服务重启或长时间空闲后需重新登录。
           </div>
           <details style="margin-top:12px;">
             <summary class="mini-note" style="cursor:pointer;">实验：页面内二维码登录</summary>
@@ -1514,6 +1515,9 @@ $("#logoutBtn").addEventListener("click", async ()=>{
     $("#qrMask").classList.add("show");
   }
   orderUI.paxLoaded = []; renderPassengers([]);
+  // 清掉本地已选乘车人缓存，避免切换账号后串号显示
+  orderUI.paxSelected = new Set();
+  try { localStorage.removeItem(orderUI.paxSelKey); } catch(_){}
   setLoggedIn(false, "");
 });
 

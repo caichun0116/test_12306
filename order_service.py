@@ -7,15 +7,14 @@
   定时查余票 → 命中（直达或买长乘短可购区段）→ 按席别优先级自动占座
   → 占到座推微信 → 任务完成自动停止。
 
-与 monitor_service.py 的「只推送不下单」不同：本模块依赖 order12306.LOGIN
-的登录态，真正调用 12306 下单接口占座（付款仍需人工到 App 完成）。
+与 monitor_service.py 的「只推送不下单」不同：本模块依赖每个任务自带的
+LoginSession 登录态，真正调用 12306 下单接口占座（付款仍需人工到 App 完成）。
 
-配置与轻量状态持久化到 order_jobs.json，进程重启后恢复 running 任务
-（前提是 login_session.json 里的登录态仍有效）。
+多用户：任务按 owner（浏览器会话 id）隔离，且为运行时内存态、不落盘
+（登录态本就只存内存，服务器重启需各自重新扫码）。
 """
 
 import os
-import json
 import uuid
 import random
 import threading
@@ -27,11 +26,6 @@ import ticket
 import notify
 import order12306
 import cryptobox
-from order12306 import LOGIN
-from persist import DebouncedJsonStore
-
-_JOBS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "order_jobs.json")
 
 _LOG_MAX = 60
 _EXTEND_BUDGET = lambda ext: 40 + max(0, min(ext, 5)) * 20
@@ -116,8 +110,12 @@ class OrderJob:
 
     def __init__(self, cfg: dict, jid: str | None = None,
                  on_change: Callable[[], None] | None = None,
-                 on_flush: Callable[[], None] | None = None):
+                 on_flush: Callable[[], None] | None = None,
+                 login=None, owner: str = ""):
         self.id = jid or uuid.uuid4().hex[:12]
+        # 多用户：本任务绑定的登录态（属主的 LoginSession）与属主会话 id
+        self.login = login
+        self.owner = owner
         # —— 查询/抢票配置 ——
         self.from_name   = (cfg.get("from") or "").strip()
         self.to_name     = (cfg.get("to") or "").strip()
@@ -269,9 +267,13 @@ class OrderJob:
 
     def _tick(self) -> bool:
         """查一轮 → 命中即占座。返回 True 表示已占到座（任务完成）。"""
-        if not LOGIN.logged_in:
-            # 登录失效：尝试用持久化 Cookie 复验一次
-            if not LOGIN.check_online():
+        if self.login is None:
+            self.last_error = "登录会话已失效，请重新扫码登录后新建任务"
+            return False
+        self.login.touch()   # 保活：有运行任务的会话不会被注册表空闲驱逐
+        if not self.login.logged_in:
+            # 登录失效：复验一次
+            if not self.login.check_online():
                 self.last_error = "登录已失效，请到「自动抢票下单」页重新扫码登录"
                 return False
 
@@ -421,14 +423,16 @@ class OrderJob:
         passengers = self._resolve_passengers()
         if not passengers:
             return False, "乘车人信息失效，请重新选择乘车人"
-        return LOGIN.submit_order(
+        return self.login.submit_order(
             secret_str=cand["secret_str"], train_date=date,
             from_name=cand["from_name"], to_name=cand["to_name"],
             seat_type_name=cand["seat_type"], passengers=passengers)
 
     def _resolve_passengers(self) -> list:
         """用当前登录态拉取最新乘客，补全最新 allEncStr。"""
-        ok, live, _ = LOGIN.passengers()
+        if self.login is None:
+            return []
+        ok, live, _ = self.login.passengers()
         if not ok:
             return []
         out = []
@@ -458,89 +462,57 @@ class OrderJob:
 
 
 class OrderManager:
-    """进程内自动抢票任务管理器（单例，线程安全）。"""
+    """进程内自动抢票任务管理器（单例，线程安全）。
+
+    多用户：任务按 owner（浏览器会话 id）隔离，每人只看/操作自己的。
+    任务为运行时内存态，不落盘（登录态本就只存内存，重启需重新扫码）。
+    """
 
     def __init__(self):
         self._jobs: dict[str, OrderJob] = {}
         self._lock = threading.Lock()
-        # 防抖落盘：高频日志只标记脏，由后台线程合并写；终态/退出立即 flush
-        self._store = DebouncedJsonStore(_JOBS_FILE, self._serialize)
-        self._load()
 
-    def create(self, cfg: dict) -> OrderJob:
-        job = OrderJob(cfg, on_change=self._save, on_flush=self._flush)
+    def create(self, cfg: dict, login=None, owner: str = "") -> OrderJob:
+        job = OrderJob(cfg, login=login, owner=owner)
         with self._lock:
             self._jobs[job.id] = job
         job.start()
-        self._flush()
         return job
 
-    def list(self) -> list:
+    def list(self, owner: str = "") -> list:
         with self._lock:
-            jobs = list(self._jobs.values())
+            jobs = [j for j in self._jobs.values() if j.owner == owner]
         return [j.summary() for j in jobs]
 
-    def get(self, jid: str) -> OrderJob | None:
+    def get(self, jid: str, owner: str = "") -> OrderJob | None:
         with self._lock:
-            return self._jobs.get(jid)
+            job = self._jobs.get(jid)
+        if job and job.owner == owner:
+            return job
+        return None
 
-    def start(self, jid: str) -> bool:
-        job = self.get(jid)
+    def start(self, jid: str, owner: str = "") -> bool:
+        job = self.get(jid, owner)
         if not job or job.status == "done":
             return False
         job.start()
-        self._flush()
         return True
 
-    def stop(self, jid: str) -> bool:
-        job = self.get(jid)
+    def stop(self, jid: str, owner: str = "") -> bool:
+        job = self.get(jid, owner)
         if not job:
             return False
         job.stop()
-        self._flush()
         return True
 
-    def delete(self, jid: str) -> bool:
-        with self._lock:
-            job = self._jobs.pop(jid, None)
+    def delete(self, jid: str, owner: str = "") -> bool:
+        job = self.get(jid, owner)
         if not job:
             return False
         job.stop()
-        self._flush()
-        return True
-
-    # ── 持久化 ──
-    def _serialize(self) -> list:
         with self._lock:
-            return [j.to_config() for j in self._jobs.values()]
-
-    def _save(self):
-        """合并写：标记脏，由后台线程在合并窗口内写盘（高频日志用）。"""
-        self._store.mark_dirty()
-
-    def _flush(self):
-        """立即同步写盘（创建 / 停止 / 删除 / 终态用）。"""
-        self._store.flush_now()
-
-    def _load(self):
-        if not os.path.exists(_JOBS_FILE):
-            return
-        try:
-            with open(_JOBS_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return
-        for cfg in data or []:
-            job = OrderJob(cfg, jid=cfg.get("id"), on_change=self._save,
-                           on_flush=self._flush)
-            job.log = cfg.get("log") or []
-            # 恢复展示态：已完成/已停止/出错任务保留原状态与订单信息，
-            # 不会被当成 running 重新抢（只有 cfg.status == running 才重启线程）。
-            job.status = cfg.get("status") or "stopped"
-            job.order_info = cfg.get("order_info", "")
-            self._jobs[job.id] = job
-            if cfg.get("status") == "running":
-                job.start()
+            self._jobs.pop(jid, None)
+        return True
 
 
 # 进程内单例

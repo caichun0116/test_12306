@@ -16,6 +16,9 @@ qp_12306_cookies.json
 # 访问令牌（绝不能提交：泄露则等于鉴权失效）
 .app_token
 
+# Flask 会话签名密钥（绝不能提交：泄露则可伪造会话）
+.flask_secret
+
 # macOS
 .DS_Store
 

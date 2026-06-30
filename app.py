@@ -19,7 +19,7 @@ import subprocess
 import urllib.error
 import urllib.request
 
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session
 
 import ticket
 import notify
@@ -73,6 +73,55 @@ def _load_app_token() -> tuple[str, str]:
 
 
 _APP_TOKEN, _APP_TOKEN_SOURCE = _load_app_token()
+
+
+def _load_flask_secret() -> str:
+    """Flask 会话签名密钥：env FLASK_SECRET 优先，否则读/生成 .flask_secret（0600）。"""
+    env = (os.environ.get("FLASK_SECRET") or "").strip()
+    if env:
+        return env
+    path = os.path.join(_BASE_DIR, ".flask_secret")
+    try:
+        if os.path.exists(path):
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            with open(path, encoding="utf-8") as f:
+                val = f.read().strip()
+            if val:
+                return val
+        val = secrets.token_urlsafe(32)
+        _write_secret_file(path, val)
+        return val
+    except OSError:
+        # 兜底：进程内随机密钥（重启后旧会话 cookie 失效，可接受）
+        return secrets.token_urlsafe(32)
+
+
+app.secret_key = _load_flask_secret()
+
+
+# ──────────────────────────────────────────
+# 多用户会话：每个浏览器一个 sid，对应一份独立的 12306 登录态
+# ──────────────────────────────────────────
+
+def _ensure_sid() -> str:
+    sid = session.get("sid")
+    if not sid:
+        sid = secrets.token_urlsafe(16)
+        session["sid"] = sid
+        session.permanent = True
+    return sid
+
+
+def current_sid() -> str:
+    return session.get("sid") or _ensure_sid()
+
+
+def current_login():
+    """返回当前浏览器会话对应的 12306 登录态（懒创建）。"""
+    return order12306.REGISTRY.get_or_create(current_sid())
 
 
 def _resolve_station(value: str):
@@ -138,7 +187,7 @@ def _open_official_chrome():
     ])
 
 
-def _import_chrome_12306_cookies() -> tuple[bool, str, int]:
+def _import_chrome_12306_cookies(login) -> tuple[bool, str, int]:
     version = _chrome_version()
     if not version:
         return False, "未检测到官方登录 Chrome，请先点击「打开官方登录页」", 0
@@ -179,11 +228,9 @@ ws.onerror = (err) => {
     if not cookies:
         return False, "未读取到 12306 Cookie，请确认官方页面已登录", 0
 
-    login = order12306.LOGIN
     order12306._load_cookies(login.s.cookies, cookies)
     login.logged_in = login.check_online(force=True)
     if login.logged_in:
-        login._save()
         return True, "已导入官方网页登录态", len(cookies)
     return False, "已读取 Cookie，但 12306 校验未登录，请在官方页面重新扫码确认", len(cookies)
 
@@ -198,14 +245,19 @@ def _require_token():
     """
     if request.method == "OPTIONS":
         return None
-    if request.endpoint in (None, "index", "static"):
+    if request.endpoint == "static":
+        return None
+    if request.endpoint in (None, "index"):
+        _ensure_sid()           # 页面加载即种下会话 cookie
         return None
     if not _APP_TOKEN:
         if request.remote_addr in _LOCAL_ADDRS:
+            _ensure_sid()
             return None
         return jsonify({"ok": False, "error": "未授权（令牌不可用，仅本机可访问）"}), 403
     sent = request.headers.get("X-App-Token", "")
     if hmac.compare_digest(sent, _APP_TOKEN):
+        _ensure_sid()
         return None
     return jsonify({"ok": False, "error": "未授权：请在页面右上角填写访问令牌"}), 401
 
@@ -323,18 +375,18 @@ def api_monitor_create():
     if not channel or not token:
         return jsonify({"ok": False, "error": "服务端监控需先配置微信推送（渠道 + token）"})
 
-    job = MANAGER.create(data)
+    job = MANAGER.create(data, owner=current_sid())
     return jsonify({"ok": True, "id": job.id, "job": job.summary()})
 
 
 @app.route("/api/monitor/list")
 def api_monitor_list():
-    return jsonify({"ok": True, "jobs": MANAGER.list()})
+    return jsonify({"ok": True, "jobs": MANAGER.list(owner=current_sid())})
 
 
 @app.route("/api/monitor/<jid>")
 def api_monitor_detail(jid):
-    job = MANAGER.get(jid)
+    job = MANAGER.get(jid, owner=current_sid())
     if not job:
         return jsonify({"ok": False, "error": "任务不存在"})
     return jsonify({"ok": True, "job": job.detail()})
@@ -343,14 +395,14 @@ def api_monitor_detail(jid):
 @app.route("/api/monitor/stop", methods=["POST"])
 def api_monitor_stop():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = MANAGER.stop(jid)
+    ok = MANAGER.stop(jid, owner=current_sid())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 
 @app.route("/api/monitor/delete", methods=["POST"])
 def api_monitor_delete():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = MANAGER.delete(jid)
+    ok = MANAGER.delete(jid, owner=current_sid())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 
@@ -361,7 +413,7 @@ def api_monitor_delete():
 @app.route("/api/order/login/qr", methods=["POST"])
 def api_order_login_qr():
     """生成 12306 登录二维码（base64 图片）。"""
-    ok, img, msg = order12306.LOGIN.create_qr()
+    ok, img, msg = current_login().create_qr()
     if not ok:
         return jsonify({"ok": False, "error": msg or "获取二维码失败"})
     return jsonify({"ok": True, "image": img})
@@ -380,43 +432,46 @@ def api_order_login_official_open():
 @app.route("/api/order/login/official/import", methods=["POST"])
 def api_order_login_official_import():
     """从官方 Chrome 调试端口导入 12306 Cookie。"""
-    ok, msg, count = _import_chrome_12306_cookies()
+    login = current_login()
+    ok, msg, count = _import_chrome_12306_cookies(login)
     return jsonify({
         "ok": ok,
-        "logged_in": bool(order12306.LOGIN.logged_in),
+        "logged_in": bool(login.logged_in),
         "cookie_count": count,
         "msg": msg,
         "error": "" if ok else msg,
-        "username": order12306.LOGIN.username,
+        "username": login.username,
     })
 
 
 @app.route("/api/order/login/status", methods=["POST"])
 def api_order_login_status():
     """轮询扫码状态：waiting / scanned / success / expired / error。"""
-    state, msg = order12306.LOGIN.check_qr()
+    login = current_login()
+    state, msg = login.check_qr()
     return jsonify({"ok": True, "state": state, "msg": msg,
-                    "username": order12306.LOGIN.username})
+                    "username": login.username})
 
 
 @app.route("/api/order/login/check")
 def api_order_login_check():
     """返回当前登录态（用于页面加载时判断是否已登录）。"""
-    online = order12306.LOGIN.check_online()
+    login = current_login()
+    online = login.check_online()
     return jsonify({"ok": True, "logged_in": online,
-                    "username": order12306.LOGIN.username})
+                    "username": login.username})
 
 
 @app.route("/api/order/logout", methods=["POST"])
 def api_order_logout():
-    order12306.LOGIN.clear()
+    current_login().clear()
     return jsonify({"ok": True})
 
 
 @app.route("/api/order/passengers")
 def api_order_passengers():
     """拉取账号下乘车人列表（需已登录）。"""
-    ok, ps, msg = order12306.LOGIN.passengers()
+    ok, ps, msg = current_login().passengers()
     if not ok:
         return jsonify({"ok": False, "error": msg or "读取乘车人失败"})
     # 不把完整身份证号下发前端，只给脱敏号 + 本进程内有效的选择 token。
@@ -430,7 +485,8 @@ def api_order_passengers():
 @app.route("/api/order/create", methods=["POST"])
 def api_order_create():
     data = request.get_json(silent=True) or {}
-    if not order12306.LOGIN.logged_in and not order12306.LOGIN.check_online():
+    login = current_login()
+    if not login.logged_in and not login.check_online():
         return jsonify({"ok": False, "error": "请先扫码登录 12306"})
 
     from_name = (data.get("from") or "").strip()
@@ -452,7 +508,7 @@ def api_order_create():
     picked_keys = set(data.get("passenger_ids") or [])
     if not picked_keys:
         return jsonify({"ok": False, "error": "请至少选择一位乘车人"})
-    ok, live, msg = order12306.LOGIN.passengers()
+    ok, live, msg = login.passengers()
     if not ok:
         return jsonify({"ok": False, "error": msg or "读取乘车人失败"})
     passengers = [p for p in live if _passenger_key(p) in picked_keys]
@@ -463,18 +519,18 @@ def api_order_create():
     cfg["from"] = from_label
     cfg["to"] = to_label
     cfg["passengers"] = passengers
-    job = ORDER_MANAGER.create(cfg)
+    job = ORDER_MANAGER.create(cfg, login=login, owner=current_sid())
     return jsonify({"ok": True, "id": job.id, "job": job.summary()})
 
 
 @app.route("/api/order/list")
 def api_order_list():
-    return jsonify({"ok": True, "jobs": ORDER_MANAGER.list()})
+    return jsonify({"ok": True, "jobs": ORDER_MANAGER.list(owner=current_sid())})
 
 
 @app.route("/api/order/<jid>")
 def api_order_detail(jid):
-    job = ORDER_MANAGER.get(jid)
+    job = ORDER_MANAGER.get(jid, owner=current_sid())
     if not job:
         return jsonify({"ok": False, "error": "任务不存在"})
     return jsonify({"ok": True, "job": job.detail()})
@@ -483,21 +539,21 @@ def api_order_detail(jid):
 @app.route("/api/order/stop", methods=["POST"])
 def api_order_stop():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = ORDER_MANAGER.stop(jid)
+    ok = ORDER_MANAGER.stop(jid, owner=current_sid())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 
 @app.route("/api/order/start", methods=["POST"])
 def api_order_start():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = ORDER_MANAGER.start(jid)
+    ok = ORDER_MANAGER.start(jid, owner=current_sid())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在或已完成"})
 
 
 @app.route("/api/order/delete", methods=["POST"])
 def api_order_delete():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
-    ok = ORDER_MANAGER.delete(jid)
+    ok = ORDER_MANAGER.delete(jid, owner=current_sid())
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 

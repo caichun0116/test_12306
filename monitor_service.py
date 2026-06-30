@@ -10,12 +10,10 @@
   - ticket.book_url()        ：官方下单/候补深链（与网页一致）
   - notify.push_message()    ：渲染成与网页一致的「结果卡片」推到微信
 
-每个监控任务（Job）一个 daemon 线程 + 停止事件；配置与轻量状态持久化到
-monitor_jobs.json，进程重启后自动恢复 running 任务。
+每个监控任务（Job）一个 daemon 线程 + 停止事件。
+多用户：任务按 owner（浏览器会话 id）隔离；运行时内存态、不落盘，服务重启即清空。
 """
 
-import os
-import json
 import uuid
 import random
 import threading
@@ -24,10 +22,6 @@ from datetime import datetime
 import ticket
 import notify
 import cryptobox
-from persist import DebouncedJsonStore
-
-_JOBS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          "monitor_jobs.json")
 
 # 单任务命中日志保留条数上限，防止长期运行内存无限增长
 _FOUND_LOG_MAX = 50
@@ -42,8 +36,9 @@ def _now() -> str:
 class Job:
     """单个监控任务：配置 + 运行态 + 后台线程。"""
 
-    def __init__(self, cfg: dict, jid: str | None = None):
+    def __init__(self, cfg: dict, jid: str | None = None, owner: str = ""):
         self.id = jid or uuid.uuid4().hex[:12]
+        self.owner = owner               # 属主浏览器会话 id（多用户隔离）
         # —— 查询配置 ——
         self.from_name   = (cfg.get("from") or "").strip()
         self.to_name     = (cfg.get("to") or "").strip()
@@ -235,74 +230,50 @@ class Job:
 
 
 class MonitorManager:
-    """进程内监控任务管理器（单例，线程安全）。"""
+    """进程内监控任务管理器（单例，线程安全）。
+
+    多用户：任务按 owner（浏览器会话 id）隔离；运行时内存态、不落盘。
+    """
 
     def __init__(self):
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
-        # 监控只在 create/stop/delete 时落盘（低频），用共享 store 拿到原子写 + atexit 兜底
-        self._store = DebouncedJsonStore(_JOBS_FILE, self._serialize)
-        self._load()
 
     # ── 对外 API ──
-    def create(self, cfg: dict) -> Job:
-        job = Job(cfg)
+    def create(self, cfg: dict, owner: str = "") -> Job:
+        job = Job(cfg, owner=owner)
         with self._lock:
             self._jobs[job.id] = job
         job.start()
-        self._save()
         return job
 
-    def list(self) -> list:
+    def list(self, owner: str = "") -> list:
         with self._lock:
-            jobs = list(self._jobs.values())
+            jobs = [j for j in self._jobs.values() if j.owner == owner]
         return [j.summary() for j in jobs]
 
-    def get(self, jid: str) -> Job | None:
+    def get(self, jid: str, owner: str = "") -> Job | None:
         with self._lock:
-            return self._jobs.get(jid)
+            job = self._jobs.get(jid)
+        if job and job.owner == owner:
+            return job
+        return None
 
-    def stop(self, jid: str) -> bool:
-        job = self.get(jid)
+    def stop(self, jid: str, owner: str = "") -> bool:
+        job = self.get(jid, owner)
         if not job:
             return False
         job.stop()
-        self._save()
         return True
 
-    def delete(self, jid: str) -> bool:
-        with self._lock:
-            job = self._jobs.pop(jid, None)
+    def delete(self, jid: str, owner: str = "") -> bool:
+        job = self.get(jid, owner)
         if not job:
             return False
         job.stop()
-        self._save()
-        return True
-
-    # ── 持久化 ──
-    def _serialize(self) -> list:
         with self._lock:
-            return [j.to_config() for j in self._jobs.values()]
-
-    def _save(self):
-        # create/stop/delete 都期望立即可见，直接同步刷盘（原子写）
-        self._store.flush_now()
-
-    def _load(self):
-        if not os.path.exists(_JOBS_FILE):
-            return
-        try:
-            with open(_JOBS_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return
-        for cfg in data or []:
-            job = Job(cfg, jid=cfg.get("id"))
-            job.found_log = cfg.get("found_log") or []
-            job.notified = set(cfg.get("notified") or [])
-            self._jobs[job.id] = job
-            if cfg.get("status") == "running":   # 重启后自动恢复
-                job.start()
+            self._jobs.pop(jid, None)
+        return True
 
 
 # 进程内单例
