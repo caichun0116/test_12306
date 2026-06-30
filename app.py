@@ -11,14 +11,26 @@
 """
 
 import os
+import hmac
+import hashlib
+import json
+import subprocess
+import urllib.error
+import urllib.request
 
 from flask import Flask, request, jsonify, render_template
 
 import ticket
 import notify
 from monitor_service import MANAGER
+import order12306
+from order_service import MANAGER as ORDER_MANAGER
 
 app = Flask(__name__)
+_PASSENGER_KEY_SALT = os.environ.get("PASSENGER_KEY_SALT") or os.urandom(16).hex()
+_CHROME_DEBUG_URL = "http://127.0.0.1:9222"
+_CHROME_PROFILE_DIR = "/tmp/qp-chrome-12306"
+_OFFICIAL_LOGIN_URL = "https://kyfw.12306.cn/otn/resources/login.html"
 
 
 def _resolve_station(value: str):
@@ -48,6 +60,89 @@ def _build_order_url(from_name: str, to_name: str, date: str):
     # 与前端 bookUrl()、monitor 共用 ticket.book_url()
     url = ticket.book_url(from_label, from_code, to_label, to_code, date)
     return url, ""
+
+
+def _passenger_key(p: dict) -> str:
+    raw = "|".join([
+        p.get("name", ""),
+        p.get("id_type_code", ""),
+        p.get("id_no", ""),
+    ])
+    return hmac.new(_PASSENGER_KEY_SALT.encode("utf-8"),
+                    raw.encode("utf-8"), hashlib.sha256).hexdigest()[:24]
+
+
+def _read_json_url(url: str, timeout: float = 3):
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _chrome_version():
+    try:
+        return _read_json_url(f"{_CHROME_DEBUG_URL}/json/version")
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return None
+
+
+def _open_official_chrome():
+    subprocess.Popen([
+        "open", "-na", "Google Chrome", "--args",
+        "--remote-debugging-port=9222",
+        f"--user-data-dir={_CHROME_PROFILE_DIR}",
+        "--no-first-run",
+        "--new-window",
+        _OFFICIAL_LOGIN_URL,
+    ])
+
+
+def _import_chrome_12306_cookies() -> tuple[bool, str, int]:
+    version = _chrome_version()
+    if not version:
+        return False, "未检测到官方登录 Chrome，请先点击「打开官方登录页」", 0
+
+    script = r"""
+const wsUrl = process.argv[1];
+const ws = new WebSocket(wsUrl);
+const id = 1;
+ws.onopen = () => ws.send(JSON.stringify({id, method: "Storage.getCookies", params: {}}));
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.id !== id) return;
+  const cookies = (msg.result.cookies || []).filter(c => String(c.domain || "").includes("12306.cn"));
+  console.log(JSON.stringify(cookies));
+  ws.close();
+};
+ws.onerror = (err) => {
+  console.error(String(err && err.message || err || "WebSocket error"));
+  process.exit(2);
+};
+"""
+    try:
+        proc = subprocess.run(
+            ["node", "-e", script, version.get("webSocketDebuggerUrl", "")],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"读取 Chrome Cookie 失败：{e}", 0
+    if proc.returncode != 0:
+        return False, (proc.stderr or "读取 Chrome Cookie 失败").strip(), 0
+    try:
+        cookies = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return False, "Chrome Cookie 返回格式异常", 0
+    if not cookies:
+        return False, "未读取到 12306 Cookie，请确认官方页面已登录", 0
+
+    login = order12306.LOGIN
+    order12306._load_cookies(login.s.cookies, cookies)
+    login.logged_in = login.check_online()
+    if login.logged_in:
+        login._save()
+        return True, "已导入官方网页登录态", len(cookies)
+    return False, "已读取 Cookie，但 12306 校验未登录，请在官方页面重新扫码确认", len(cookies)
 
 
 @app.route("/")
@@ -191,6 +286,153 @@ def api_monitor_stop():
 def api_monitor_delete():
     jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
     ok = MANAGER.delete(jid)
+    return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
+
+
+# ──────────────────────────────────────────
+# 自动抢票下单（扫码登录 + 全自动占座）
+# ──────────────────────────────────────────
+
+@app.route("/api/order/login/qr", methods=["POST"])
+def api_order_login_qr():
+    """生成 12306 登录二维码（base64 图片）。"""
+    ok, img, msg = order12306.LOGIN.create_qr()
+    if not ok:
+        return jsonify({"ok": False, "error": msg or "获取二维码失败"})
+    return jsonify({"ok": True, "image": img})
+
+
+@app.route("/api/order/login/official/open", methods=["POST"])
+def api_order_login_official_open():
+    """打开官方 12306 Chrome 登录页（推荐登录方式）。"""
+    try:
+        _open_official_chrome()
+    except OSError as e:
+        return jsonify({"ok": False, "error": f"打开 Chrome 失败：{e}"})
+    return jsonify({"ok": True, "url": _OFFICIAL_LOGIN_URL})
+
+
+@app.route("/api/order/login/official/import", methods=["POST"])
+def api_order_login_official_import():
+    """从官方 Chrome 调试端口导入 12306 Cookie。"""
+    ok, msg, count = _import_chrome_12306_cookies()
+    return jsonify({
+        "ok": ok,
+        "logged_in": bool(order12306.LOGIN.logged_in),
+        "cookie_count": count,
+        "msg": msg,
+        "error": "" if ok else msg,
+        "username": order12306.LOGIN.username,
+    })
+
+
+@app.route("/api/order/login/status", methods=["POST"])
+def api_order_login_status():
+    """轮询扫码状态：waiting / scanned / success / expired / error。"""
+    state, msg = order12306.LOGIN.check_qr()
+    return jsonify({"ok": True, "state": state, "msg": msg,
+                    "username": order12306.LOGIN.username})
+
+
+@app.route("/api/order/login/check")
+def api_order_login_check():
+    """返回当前登录态（用于页面加载时判断是否已登录）。"""
+    online = order12306.LOGIN.check_online()
+    return jsonify({"ok": True, "logged_in": online,
+                    "username": order12306.LOGIN.username})
+
+
+@app.route("/api/order/logout", methods=["POST"])
+def api_order_logout():
+    order12306.LOGIN.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/order/passengers")
+def api_order_passengers():
+    """拉取账号下乘车人列表（需已登录）。"""
+    ok, ps, msg = order12306.LOGIN.passengers()
+    if not ok:
+        return jsonify({"ok": False, "error": msg or "读取乘车人失败"})
+    # 不把完整身份证号下发前端，只给脱敏号 + 本进程内有效的选择 token。
+    safe = [{"name": p["name"], "id": _passenger_key(p),
+             "id_no_mask": p["id_no_mask"],
+             "id_type_name": p["id_type_name"],
+             "passenger_type": p["passenger_type"]} for p in ps]
+    return jsonify({"ok": True, "passengers": safe})
+
+
+@app.route("/api/order/create", methods=["POST"])
+def api_order_create():
+    data = request.get_json(silent=True) or {}
+    if not order12306.LOGIN.logged_in and not order12306.LOGIN.check_online():
+        return jsonify({"ok": False, "error": "请先扫码登录 12306"})
+
+    from_name = (data.get("from") or "").strip()
+    to_name   = (data.get("to") or "").strip()
+    dates     = [d for d in (data.get("dates") or []) if d]
+    if not from_name or not to_name or not dates:
+        return jsonify({"ok": False, "error": "请填写出发地、目的地和至少一个日期"})
+    from_code, from_label = _resolve_station(from_name)
+    to_code, to_label = _resolve_station(to_name)
+    if not from_code:
+        return jsonify({"ok": False, "error": f"未找到出发站「{from_name}」"})
+    if not to_code:
+        return jsonify({"ok": False, "error": f"未找到到达站「{to_name}」"})
+
+    if not (data.get("seat_types") or []):
+        return jsonify({"ok": False, "error": "请至少勾选一个要抢的坐席"})
+
+    # 用账号真实乘客补全 allEncStr 等下单字段，按前端选择 token 匹配。
+    picked_keys = set(data.get("passenger_ids") or [])
+    if not picked_keys:
+        return jsonify({"ok": False, "error": "请至少选择一位乘车人"})
+    ok, live, msg = order12306.LOGIN.passengers()
+    if not ok:
+        return jsonify({"ok": False, "error": msg or "读取乘车人失败"})
+    passengers = [p for p in live if _passenger_key(p) in picked_keys]
+    if not passengers:
+        return jsonify({"ok": False, "error": "所选乘车人无效，请重新选择"})
+
+    cfg = dict(data)
+    cfg["from"] = from_label
+    cfg["to"] = to_label
+    cfg["passengers"] = passengers
+    job = ORDER_MANAGER.create(cfg)
+    return jsonify({"ok": True, "id": job.id, "job": job.summary()})
+
+
+@app.route("/api/order/list")
+def api_order_list():
+    return jsonify({"ok": True, "jobs": ORDER_MANAGER.list()})
+
+
+@app.route("/api/order/<jid>")
+def api_order_detail(jid):
+    job = ORDER_MANAGER.get(jid)
+    if not job:
+        return jsonify({"ok": False, "error": "任务不存在"})
+    return jsonify({"ok": True, "job": job.detail()})
+
+
+@app.route("/api/order/stop", methods=["POST"])
+def api_order_stop():
+    jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
+    ok = ORDER_MANAGER.stop(jid)
+    return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
+
+
+@app.route("/api/order/start", methods=["POST"])
+def api_order_start():
+    jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
+    ok = ORDER_MANAGER.start(jid)
+    return jsonify({"ok": ok, "error": "" if ok else "任务不存在或已完成"})
+
+
+@app.route("/api/order/delete", methods=["POST"])
+def api_order_delete():
+    jid = ((request.get_json(silent=True) or {}).get("id") or "").strip()
+    ok = ORDER_MANAGER.delete(jid)
     return jsonify({"ok": ok, "error": "" if ok else "任务不存在"})
 
 

@@ -104,6 +104,72 @@
   .srv-job .jbtn:hover { background:#f1f5f9; }
   .srv-job .jfound { margin-top:8px; font-size:13px; color:#166534; }
   .srv-job .jfound .row { padding:2px 0; }
+  .tabs { display:flex; gap:8px; margin-bottom:16px; border-bottom:1px solid #cbd5e1; }
+  .tab-btn { border:0; border-bottom:3px solid transparent; background:transparent; color:var(--gray);
+             padding:11px 14px 10px; font-size:15px; font-weight:700; cursor:pointer; }
+  .tab-btn:hover { color:#0f172a; }
+  .tab-btn.active { color:var(--blue); border-bottom-color:var(--blue); }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; }
+  .order-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:14px 18px; }
+  .order-grid .field input, .order-grid .field select {
+    width:100%; min-width:0; padding:9px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:15px;
+  }
+  .order-grid .wide { grid-column:1 / -1; }
+  .order-toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:18px; }
+  .order-status { font-size:13px; color:var(--gray); }
+  .order-summary { margin-top:14px; border:1px solid #dbeafe; background:#eff6ff; border-radius:8px;
+                   padding:12px 14px; font-size:13px; color:#1e40af; line-height:1.7; }
+  .pill-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .pill { display:inline-flex; align-items:center; gap:4px; background:#f8fafc; border:1px solid #e2e8f0;
+          color:#334155; border-radius:20px; padding:4px 10px; font-size:12px; }
+  .pill.ok { background:#dcfce7; border-color:#bbf7d0; color:#166534; }
+  .pill.warn { background:#fffbeb; border-color:#fde68a; color:#92400e; }
+  .mini-note { font-size:12px; color:var(--gray); line-height:1.6; margin-top:8px; }
+  .order-preview { margin-top:12px; }
+  .order-log { border:1px solid #e2e8f0; border-radius:8px; background:#f8fafc; padding:12px 14px;
+               font-size:13px; color:#334155; line-height:1.7; }
+  /* 扫码登录 */
+  .login-box { display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+  .qr-wrap { width:180px; height:180px; border:1px solid #e2e8f0; border-radius:10px;
+             display:flex; align-items:center; justify-content:center; background:#fff; position:relative; }
+  .qr-wrap img { width:100%; height:100%; object-fit:contain; border-radius:10px; }
+  .qr-wrap .mask { position:absolute; inset:0; background:rgba(255,255,255,.9); border-radius:10px;
+                   display:none; flex-direction:column; align-items:center; justify-content:center;
+                   gap:8px; font-size:13px; color:#334155; text-align:center; padding:10px; }
+  .qr-wrap .mask.show { display:flex; }
+  .login-state { font-size:14px; color:#334155; line-height:1.8; }
+  .login-state .who { font-weight:700; color:#16a34a; }
+  .pax-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .pax { display:inline-flex; align-items:center; gap:6px; background:#f8fafc; border:1px solid #e2e8f0;
+         border-radius:8px; padding:6px 10px; font-size:13px; cursor:pointer; }
+  .pax.sel { background:#dcfce7; border-color:#86efac; color:#166534; }
+  .pax input { pointer-events:none; }
+  .order-job { border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; width:100%;
+               box-sizing:border-box; background:#fff; }
+  .order-job .jhead { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+  .order-job .jroute { font-size:15px; font-weight:700; }
+  .order-job .jmeta { font-size:13px; color:var(--gray); }
+  .order-job .sdot { width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .order-job .sdot.running { background:#22c55e; animation:pulse 1.2s infinite; }
+  .order-job .sdot.stopped { background:#94a3b8; }
+  .order-job .sdot.error { background:#ef4444; }
+  .order-job .sdot.done { background:#2563eb; }
+  .order-job .jbtns { margin-left:auto; display:flex; gap:8px; }
+  .order-job .jbtn { font-size:13px; border:1px solid #cbd5e1; background:#fff; border-radius:6px;
+                     padding:5px 12px; cursor:pointer; color:#334155; }
+  .order-job .jbtn.danger { color:#b91c1c; border-color:#fecaca; }
+  .order-job .jbtn:hover { background:#f1f5f9; }
+  .order-job .jlog { margin-top:8px; font-size:12px; color:#475569; line-height:1.7;
+                     max-height:160px; overflow:auto; border-top:1px dashed #e2e8f0; padding-top:8px; display:none; }
+  .order-job .jlog.show { display:block; }
+  .order-warn { margin:0 0 16px; padding:12px 14px; border-radius:8px; background:#fef2f2;
+                border:1px solid #fecaca; font-size:13px; color:#991b1b; line-height:1.7; }
+  @media (max-width:720px) {
+    .tabs { overflow-x:auto; }
+    .tab-btn { white-space:nowrap; }
+    .order-grid { grid-template-columns:1fr; }
+  }
 </style>
 </head>
 <body>
@@ -113,6 +179,12 @@
 </header>
 
 <div class="wrap">
+  <div class="tabs" role="tablist" aria-label="功能切换">
+    <button class="tab-btn active" data-tab="query" type="button">余票查询</button>
+    <button class="tab-btn" data-tab="order" type="button">自动抢票下单</button>
+  </div>
+
+  <section class="tab-panel active" id="queryTab">
   <div class="card">
     <div class="row">
       <div class="field">
@@ -264,15 +336,198 @@
   </div>
 
   <div id="result"></div>
+  </section>
+
+  <section class="tab-panel" id="orderTab">
+    <div class="order-warn">
+      ⚠️ <b>全自动占座</b>：扫码登录你自己的 12306 账号后，后台抢到票会<b>自动提交订单占座</b>，
+      你只需到 12306 App「未完成订单」里<b>付款</b>即可。登录态仅保存在<b>本机</b>，不上传任何服务器。
+      接口为 12306 非公开接口，可能因风控/改版失效；请仅用于<b>本人</b>购票。
+    </div>
+
+    <!-- 1. 官方网页登录 -->
+    <div class="card">
+      <div class="hist-head">
+        <span class="t">① 登录 12306（官方网页登录）</span>
+        <span class="order-status" id="loginState">检查登录状态…</span>
+      </div>
+      <div class="login-box">
+        <div>
+          <div class="login-state" id="loginInfo">尚未登录</div>
+          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="go" id="officialOpenBtn" style="padding:9px 20px;font-size:15px;">打开官方登录页</button>
+            <button class="mon" id="officialImportBtn" style="margin-left:0;">导入登录态</button>
+            <button class="mon" id="loginCheckBtn" style="margin-left:0;">检查登录</button>
+            <button class="mon" id="logoutBtn" style="margin-left:0;">退出登录</button>
+          </div>
+          <div class="mini-note">
+            推荐流程：打开官方 12306 页面 → 用 12306 App 扫码确认 → 回到本页点「导入登录态」。
+            登录态只保存在本机，下次服务重启会自动恢复。
+          </div>
+          <details style="margin-top:12px;">
+            <summary class="mini-note" style="cursor:pointer;">实验：页面内二维码登录</summary>
+            <div class="login-box" style="margin-top:10px;">
+              <div class="qr-wrap" id="qrWrap">
+                <div class="mask show" id="qrMask">实验功能<br>当前推荐使用官方登录页</div>
+                <img id="qrImg" alt="登录二维码" style="display:none;">
+              </div>
+              <div>
+                <button class="mon" id="qrBtn" style="margin-left:0;">获取页面内二维码</button>
+                <div class="mini-note">该方式受 12306 设备指纹影响，可能扫码确认后仍无法换取下单登录态。</div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 乘车人 -->
+    <div class="card">
+      <div class="hist-head">
+        <span class="t">② 选择乘车人（来自你的 12306 账号）</span>
+        <button class="mon" id="paxRefresh" style="margin-left:0;padding:7px 14px;font-size:14px;">刷新乘车人</button>
+      </div>
+      <div class="pax-list" id="paxList">
+        <span class="jmeta" style="color:var(--gray);">登录后点「刷新乘车人」加载</span>
+      </div>
+      <div class="mini-note">勾选谁就给谁买票；张数 = 勾选人数。需提前在 12306 App 添加好乘车人。</div>
+    </div>
+
+    <!-- 3. 抢票条件 -->
+    <div class="card">
+      <div class="hist-head">
+        <span class="t">③ 抢票条件</span>
+        <button class="mon" id="orderFromQuery" style="margin-left:0;padding:7px 14px;font-size:14px;">用查询条件填入</button>
+      </div>
+
+      <div class="order-grid">
+        <div class="field">
+          <label>出发地</label>
+          <input id="orderFrom" list="stationList" placeholder="如 北京南" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>目的地</label>
+          <input id="orderTo" list="stationList" placeholder="如 上海虹桥" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>出行日期</label>
+          <input id="orderDate" type="date">
+        </div>
+        <div class="field">
+          <label>结束日期（可选，多日期）</label>
+          <input id="orderDateEnd" type="date">
+        </div>
+        <div class="field">
+          <label>指定车次（可选，逗号分隔）</label>
+          <input id="orderTrainNames" type="text" placeholder="如 G1,G3,D5">
+        </div>
+        <div class="field">
+          <label>后台检查间隔（秒）</label>
+          <input id="orderInterval" type="number" value="15" min="5" max="3600">
+        </div>
+      </div>
+
+      <div class="group-title">车次类型（不选 = 全部）</div>
+      <div class="checks" id="orderTrainTypes">
+        <label><input type="checkbox" value="GC">高铁/城际(G/C)</label>
+        <label><input type="checkbox" value="D">动车(D)</label>
+        <label><input type="checkbox" value="Z">直达(Z)</label>
+        <label><input type="checkbox" value="T">特快(T)</label>
+        <label><input type="checkbox" value="K">快速(K)</label>
+        <label><input type="checkbox" value="OTHER">其他</label>
+      </div>
+
+      <div class="group-title">坐席（勾选你要抢的席别，命中任一个就自动占座）</div>
+      <div class="checks" id="orderSeatTypes">
+        <label><input type="checkbox" value="商务座">商务座</label>
+        <label><input type="checkbox" value="一等座">一等座</label>
+        <label><input type="checkbox" value="二等座" checked>二等座</label>
+        <label><input type="checkbox" value="动卧">动卧</label>
+        <label><input type="checkbox" value="软卧">软卧</label>
+        <label><input type="checkbox" value="硬卧">硬卧</label>
+        <label><input type="checkbox" value="硬座">硬座</label>
+        <label><input type="checkbox" value="无座">无座</label>
+      </div>
+
+      <div class="group-title">买长乘短（直达无票时，自动占可购的延伸区段）</div>
+      <div class="checks" style="align-items:center;">
+        <label><input type="checkbox" id="orderAllowExtend"> 启用买长乘短自动占座</label>
+        <label>延伸范围
+          <select id="orderExtend" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;">
+            <option value="1" selected>前后各 1 站</option>
+            <option value="2">前后各 2 站</option>
+            <option value="3">前后各 3 站</option>
+            <option value="4">前后各 4 站</option>
+            <option value="5">前后各 5 站</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="group-title">抢到票后微信通知（可选）</div>
+      <div class="checks" style="align-items:center; gap:10px;">
+        <label><input type="checkbox" id="orderWxEnable" checked> 微信通知</label>
+        <select id="orderWxSaved" style="padding:7px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;min-width:160px;">
+          <option value="">— 选择已存配置 —</option>
+        </select>
+        <select id="orderWxChannel" style="padding:7px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;">
+          <option value="pushplus">PushPlus</option>
+          <option value="serverchan">Server酱</option>
+          <option value="wecom">企业微信</option>
+        </select>
+        <input id="orderWxToken" type="text" placeholder="token / SendKey / 机器人webhook网址"
+               style="flex:1;min-width:240px;padding:7px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;">
+        <button class="mon" id="orderWxTest" style="margin-left:0;padding:7px 16px;font-size:14px;">测试</button>
+      </div>
+
+      <div class="order-summary" id="orderSummary"></div>
+      <div class="order-toolbar">
+        <button class="go" id="orderCreate">▶ 开始全自动抢票</button>
+        <span class="order-status" id="orderStatus"></span>
+      </div>
+      <div class="mini-note">抢到座后任务自动停止；订单进入「待支付」，请尽快到 12306 App 付款，否则会被释放。</div>
+    </div>
+
+    <div class="card">
+      <div class="hist-head">
+        <span class="t">抢票任务</span>
+        <button class="mon" id="orderRefreshJobs" style="margin-left:0;padding:7px 14px;font-size:14px;">刷新</button>
+      </div>
+      <div id="orderJobList" class="hist-list" style="flex-direction:column; gap:10px;"></div>
+    </div>
+  </section>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
+const byId = id => document.getElementById(id);
+function escHtml(s){
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"
+  }[c]));
+}
+
+// 顶部 tab：查询和抢票下单相互隔离
+const TAB_KEY = "qp_active_tab_v1";
+function setTab(name){
+  document.querySelectorAll(".tab-btn").forEach(btn=>{
+    btn.classList.toggle("active", btn.dataset.tab === name);
+  });
+  document.querySelectorAll(".tab-panel").forEach(panel=>{
+    panel.classList.toggle("active", panel.id === `${name}Tab`);
+  });
+  try { localStorage.setItem(TAB_KEY, name); } catch(_){}
+  if(name === "order") refreshJobLists();
+}
+document.querySelectorAll(".tab-btn").forEach(btn=>{
+  btn.addEventListener("click", ()=>setTab(btn.dataset.tab));
+});
 
 // 默认日期 = 明天
 (function initDate(){
   const d = new Date(); d.setDate(d.getDate()+1);
-  $("#date").value = d.toISOString().slice(0,10);
+  const v = d.toISOString().slice(0,10);
+  $("#date").value = v;
+  $("#orderDate").value = v;
 })();
 
 // 加载站点联想
@@ -383,20 +638,38 @@ renderHistory();
 const WX_KEY = "qp_wechat_v1";          // 当前激活配置
 const WX_LIST_KEY = "qp_wx_configs_v1"; // 已保存的多套配置 [{name,channel,token}]
 
-(function initWx(){
-  try {
-    const c = JSON.parse(localStorage.getItem(WX_KEY)) || {};
-    if(c.enable) $("#wxEnable").checked = true;
-    if(c.channel) $("#wxChannel").value = c.channel;
-    if(c.token) $("#wxToken").value = c.token;
-  } catch(_){}
-})();
-function saveWx(){
-  const c = { enable:$("#wxEnable").checked, channel:$("#wxChannel").value, token:$("#wxToken").value.trim() };
+function loadWx(){
+  try { return JSON.parse(localStorage.getItem(WX_KEY)) || {}; }
+  catch(_){ return {}; }
+}
+function applyWx(c){
+  if(byId("wxEnable")) $("#wxEnable").checked = !!c.enable;
+  if(byId("wxChannel") && c.channel) $("#wxChannel").value = c.channel;
+  if(byId("wxToken") && c.token != null) $("#wxToken").value = c.token;
+  if(byId("orderWxEnable")) $("#orderWxEnable").checked = c.enable !== false;
+  if(byId("orderWxChannel") && c.channel) $("#orderWxChannel").value = c.channel;
+  if(byId("orderWxToken") && c.token != null) $("#orderWxToken").value = c.token;
+}
+function wxFrom(prefix){
+  const p = prefix ? `${prefix}Wx` : "wx";
+  return {
+    enable: $(`#${p}Enable`).checked,
+    channel: $(`#${p}Channel`).value,
+    token: $(`#${p}Token`).value.trim(),
+  };
+}
+(function initWx(){ applyWx(loadWx()); })();
+function persistWx(c){
   try { localStorage.setItem(WX_KEY, JSON.stringify(c)); } catch(_){}
+  applyWx(c);
   return c;
 }
+function saveWx(){ return persistWx(wxFrom("")); }
+function saveOrderWx(){ return persistWx(wxFrom("order")); }
 ["wxEnable","wxChannel","wxToken"].forEach(id => $("#"+id).addEventListener("change", saveWx));
+["orderWxEnable","orderWxChannel","orderWxToken"].forEach(id => $("#"+id).addEventListener("change", ()=>{
+  saveOrderWx(); saveOrderDraft(); updateOrderSummary();
+}));
 
 // —— 多套配置：保存 / 选择 / 删除 ——
 function loadWxList(){
@@ -409,26 +682,35 @@ function saveWxList(list){
 const CHANNEL_LABEL = { pushplus:"PushPlus", serverchan:"Server酱", wecom:"企业微信" };
 function renderWxList(selectedName){
   const list = loadWxList();
-  const sel = $("#wxSaved");
-  sel.innerHTML = `<option value="">— 选择已存配置 —</option>` +
+  const html = `<option value="">— 选择已存配置 —</option>` +
     list.map(c => `<option value="${c.name}">${c.name}（${CHANNEL_LABEL[c.channel]||c.channel}）</option>`).join("");
-  if(selectedName) sel.value = selectedName;
+  ["wxSaved", "orderWxSaved"].forEach(id=>{
+    const sel = byId(id);
+    if(!sel) return;
+    sel.innerHTML = html;
+    if(selectedName) sel.value = selectedName;
+  });
 }
 renderWxList();
 
 // 选择已存配置 → 回填渠道+token
-$("#wxSaved").addEventListener("change", ()=>{
-  const name = $("#wxSaved").value;
+function applySavedWx(name, target){
   if(!name) return;
   const c = loadWxList().find(x => x.name === name);
   if(c){
-    $("#wxChannel").value = c.channel;
-    $("#wxToken").value = c.token;
-    $("#wxEnable").checked = true;
-    saveWx();
-    $("#wxStatus").textContent = `已载入「${name}」`; $("#wxStatus").style.color = "#16a34a";
+    const cfg = {enable:true, channel:c.channel, token:c.token};
+    persistWx(cfg);
+    if(target === "order"){
+      $("#orderStatus").textContent = `已载入通知配置「${name}」`;
+      $("#orderStatus").style.color = "#16a34a";
+      updateOrderSummary();
+    } else {
+      $("#wxStatus").textContent = `已载入「${name}」`; $("#wxStatus").style.color = "#16a34a";
+    }
   }
-});
+}
+$("#wxSaved").addEventListener("change", ()=>applySavedWx($("#wxSaved").value, "query"));
+$("#orderWxSaved").addEventListener("change", ()=>applySavedWx($("#orderWxSaved").value, "order"));
 
 // 保存当前为配置
 $("#wxSaveBtn").addEventListener("click", ()=>{
@@ -512,9 +794,11 @@ async function openOrderPage(){
   const from = $("#from").value.trim();
   const to   = $("#to").value.trim();
   const date = $("#date").value;
-  if(!from || !to || !date){ alert("请先填写出发地、目的地和日期"); return; }
+  await openOfficialOrder(from, to, date, $("#orderBtn"));
+}
 
-  const btn = $("#orderBtn");
+async function openOfficialOrder(from, to, date, btn){
+  if(!from || !to || !date){ alert("请先填写出发地、目的地和日期"); return; }
   btn.disabled = true;
   // 必须在用户点击的同步路径里先开一个空白标签页占位，
   // 否则等异步 fetch 回来再 window.open 会被浏览器当作非用户手势拦截。
@@ -1038,6 +1322,397 @@ $("#srvList").addEventListener("click", async (e)=>{
 
 refreshSrvList();
 setInterval(refreshSrvList, 10000);   // 每 10s 刷新任务状态
+
+// ══════════════════════════════════════════
+// 自动抢票下单 tab（扫码登录 + 全自动占座）
+// ══════════════════════════════════════════
+const orderUI = {
+  qrTimer: null,          // 扫码轮询定时器
+  jobTimer: null,         // 任务列表自动刷新定时器
+  loggedIn: false,
+  paxSelKey: "qp_order_pax_v2",
+  paxSelected: new Set(), // 选中的乘客 token
+  paxLoaded: [],          // 最近一次拉到的乘客
+};
+try { localStorage.removeItem("qp_order_pax_v1"); } catch(_){}
+try { orderUI.paxSelected = new Set(JSON.parse(localStorage.getItem(orderUI.paxSelKey)||"[]")); } catch(_){}
+
+// —— tab 切换时：刷新登录态 + 任务列表 ——
+function refreshJobLists(){
+  checkLoginStatus();
+  refreshOrderJobs();
+  startJobAutoRefresh();
+  updateOrderSummary();
+}
+function startJobAutoRefresh(){
+  clearInterval(orderUI.jobTimer);
+  orderUI.jobTimer = setInterval(()=>{
+    if(byId("orderTab").classList.contains("active")) refreshOrderJobs();
+  }, 5000);
+}
+
+// —— 登录态 ——
+async function checkLoginStatus(){
+  try {
+    const r = await fetch("/api/order/login/check");
+    const j = await r.json();
+    setLoggedIn(!!j.logged_in, j.username||"");
+  } catch(_){ setLoggedIn(false, ""); }
+}
+function setLoggedIn(on, username){
+  orderUI.loggedIn = on;
+  const st = $("#loginState"), info = $("#loginInfo");
+  if(on){
+    st.textContent = "已登录"; st.style.color = "#16a34a";
+    info.innerHTML = `已登录：<span class="who">${username||"我的 12306 账号"}</span>`;
+    if(byId("qrMask")){
+      $("#qrMask").classList.remove("show");
+      $("#qrMask").innerHTML = "已登录 ✓";
+      $("#qrMask").classList.add("show");
+    }
+    if(byId("qrImg")) $("#qrImg").style.display = "none";
+    if(!orderUI.paxLoaded.length) loadPassengers();
+  } else {
+    st.textContent = "未登录"; st.style.color = "var(--gray)";
+    info.textContent = "尚未登录，请先打开官方登录页扫码，再导入登录态";
+  }
+}
+
+$("#officialOpenBtn").addEventListener("click", async ()=>{
+  const btn = $("#officialOpenBtn"); const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "打开中…";
+  try {
+    const r = await fetch("/api/order/login/official/open", {method:"POST"});
+    const j = await r.json();
+    if(j.ok){
+      $("#loginInfo").textContent = "已打开官方 12306 登录页，请在 Chrome 中扫码确认后回到本页导入登录态";
+    } else {
+      alert(j.error || "打开官方登录页失败");
+    }
+  } catch(e){ alert("请求失败："+e.message); }
+  finally { btn.disabled = false; btn.textContent = old; }
+});
+
+$("#officialImportBtn").addEventListener("click", importOfficialLogin);
+async function importOfficialLogin(){
+  const btn = $("#officialImportBtn"); const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "导入中…";
+  try {
+    const r = await fetch("/api/order/login/official/import", {method:"POST"});
+    const j = await r.json();
+    if(j.ok){
+      setLoggedIn(true, j.username||"");
+      $("#loginInfo").innerHTML = `已导入官方网页登录态（${j.cookie_count||0} 个 Cookie）`;
+      loadPassengers();
+    } else {
+      setLoggedIn(false, "");
+      alert(j.error || j.msg || "导入登录态失败");
+    }
+  } catch(e){ alert("请求失败："+e.message); }
+  finally { btn.disabled = false; btn.textContent = old; }
+}
+
+$("#loginCheckBtn").addEventListener("click", checkLoginStatus);
+
+$("#qrBtn").addEventListener("click", startQrLogin);
+async function startQrLogin(){
+  const btn = $("#qrBtn"); btn.disabled = true; btn.textContent = "获取中…";
+  clearInterval(orderUI.qrTimer);
+  try {
+    const r = await fetch("/api/order/login/qr", {method:"POST"});
+    const j = await r.json();
+    if(!j.ok){ alert(j.error||"获取二维码失败"); return; }
+    $("#qrImg").src = j.image; $("#qrImg").style.display = "";
+    $("#qrMask").classList.remove("show");
+    $("#loginInfo").textContent = "请用 12306 App 扫码并确认";
+    pollQr();
+  } catch(e){ alert("请求失败："+e.message); }
+  finally { btn.disabled = false; btn.textContent = "刷新二维码"; }
+}
+function pollQr(){
+  clearInterval(orderUI.qrTimer);
+  orderUI.qrTimer = setInterval(async ()=>{
+    try {
+      const r = await fetch("/api/order/login/status", {method:"POST"});
+      const j = await r.json();
+      const info = $("#loginInfo");
+      if(j.state === "success"){
+        clearInterval(orderUI.qrTimer);
+        setLoggedIn(true, j.username||"");
+        loadPassengers();
+      } else if(j.state === "expired"){
+        clearInterval(orderUI.qrTimer);
+        $("#qrMask").innerHTML = "二维码已过期<br>请重新获取"; $("#qrMask").classList.add("show");
+      } else if(j.state === "scanned"){
+        info.textContent = "已扫码，请在手机上点「确认登录」";
+      } else if(j.state === "waiting"){
+        info.textContent = "等待扫码…";
+      } else {
+        info.textContent = j.msg || "扫码状态异常";
+      }
+    } catch(_){}
+  }, 2000);
+}
+
+$("#logoutBtn").addEventListener("click", async ()=>{
+  if(!confirm("退出当前 12306 登录？")) return;
+  await fetch("/api/order/logout", {method:"POST"});
+  clearInterval(orderUI.qrTimer);
+  if(byId("qrImg")) $("#qrImg").style.display = "none";
+  if(byId("qrMask")){
+    $("#qrMask").innerHTML = "实验功能<br>当前推荐使用官方登录页";
+    $("#qrMask").classList.add("show");
+  }
+  orderUI.paxLoaded = []; renderPassengers([]);
+  setLoggedIn(false, "");
+});
+
+// —— 乘车人 ——
+$("#paxRefresh").addEventListener("click", loadPassengers);
+async function loadPassengers(){
+  const box = $("#paxList");
+  box.innerHTML = `<span class="jmeta"><span class="spinner" style="border-color:#94a3b8;border-top-color:transparent"></span> 读取乘车人…</span>`;
+  try {
+    const r = await fetch("/api/order/passengers");
+    const j = await r.json();
+    if(!j.ok){
+      box.innerHTML = `<span class="jmeta" style="color:#b91c1c;">${j.error||"读取失败"}（请先登录）</span>`;
+      return;
+    }
+    orderUI.paxLoaded = j.passengers || [];
+    renderPassengers(orderUI.paxLoaded);
+  } catch(e){ box.innerHTML = `<span class="jmeta" style="color:#b91c1c;">请求失败：${e.message}</span>`; }
+}
+function renderPassengers(list){
+  const box = $("#paxList");
+  if(!list.length){ box.innerHTML = `<span class="jmeta" style="color:var(--gray);">该账号下暂无乘车人，请先在 12306 App 添加</span>`; return; }
+  box.innerHTML = list.map(p=>{
+    const id = p.id || "";
+    const sel = orderUI.paxSelected.has(id);
+    return `<label class="pax ${sel?'sel':''}" data-id="${escHtml(id)}">
+      <input type="checkbox" ${sel?'checked':''}>
+      <b>${escHtml(p.name)}</b><span style="color:var(--gray);">${escHtml(p.id_type_name||"")} ${escHtml(p.id_no_mask||"")}</span>
+    </label>`;
+  }).join("");
+  updateOrderSummary();
+}
+$("#paxList").addEventListener("click", (e)=>{
+  const lab = e.target.closest(".pax[data-id]");
+  if(!lab) return;
+  e.preventDefault();
+  const id = lab.dataset.id;
+  if(orderUI.paxSelected.has(id)) orderUI.paxSelected.delete(id);
+  else orderUI.paxSelected.add(id);
+  try { localStorage.setItem(orderUI.paxSelKey, JSON.stringify([...orderUI.paxSelected])); } catch(_){}
+  renderPassengers(orderUI.paxLoaded);
+});
+
+// —— 用查询条件填入 ——
+$("#orderFromQuery").addEventListener("click", ()=>{
+  $("#orderFrom").value = $("#from").value;
+  $("#orderTo").value = $("#to").value;
+  $("#orderDate").value = $("#date").value;
+  $("#orderDateEnd").value = $("#dateEnd").value;
+  $("#orderTrainNames").value = $("#trainNames").value;
+  setCheckedValues("orderTrainTypes", checkedValues("trainTypes"));
+  const seats = checkedValues("seatTypes");
+  if(seats.length) setCheckedValues("orderSeatTypes", seats);
+  saveOrderDraft(); updateOrderSummary();
+  $("#orderStatus").textContent = "已从查询条件填入"; $("#orderStatus").style.color = "#16a34a";
+});
+
+// —— 抢票条件草稿（本地持久化）——
+const ORDER_DRAFT_KEY = "qp_order_draft_v1";
+function saveOrderDraft(){
+  const d = {
+    from:$("#orderFrom").value, to:$("#orderTo").value,
+    date:$("#orderDate").value, dateEnd:$("#orderDateEnd").value,
+    trainNames:$("#orderTrainNames").value, interval:$("#orderInterval").value,
+    trainTypes:checkedValues("orderTrainTypes"), seatTypes:checkedValues("orderSeatTypes"),
+    allowExtend:$("#orderAllowExtend").checked, extend:$("#orderExtend").value,
+  };
+  try { localStorage.setItem(ORDER_DRAFT_KEY, JSON.stringify(d)); } catch(_){}
+}
+(function loadOrderDraft(){
+  let d; try { d = JSON.parse(localStorage.getItem(ORDER_DRAFT_KEY)); } catch(_){}
+  if(!d) return;
+  if(d.from) $("#orderFrom").value = d.from;
+  if(d.to) $("#orderTo").value = d.to;
+  if(d.date) $("#orderDate").value = d.date;
+  if(d.dateEnd) $("#orderDateEnd").value = d.dateEnd;
+  if(d.trainNames!=null) $("#orderTrainNames").value = d.trainNames;
+  if(d.interval) $("#orderInterval").value = d.interval;
+  if(d.trainTypes) setCheckedValues("orderTrainTypes", d.trainTypes);
+  if(d.seatTypes && d.seatTypes.length) setCheckedValues("orderSeatTypes", d.seatTypes);
+  $("#orderAllowExtend").checked = !!d.allowExtend;
+  if(d.extend) $("#orderExtend").value = d.extend;
+})();
+["orderFrom","orderTo","orderDate","orderDateEnd","orderTrainNames","orderInterval",
+ "orderAllowExtend","orderExtend"].forEach(id=>{
+  const el = byId(id); if(el) el.addEventListener("change", ()=>{ saveOrderDraft(); updateOrderSummary(); });
+});
+["orderTrainTypes","orderSeatTypes"].forEach(id=>{
+  const box = byId(id); if(box) box.addEventListener("change", ()=>{ saveOrderDraft(); updateOrderSummary(); });
+});
+
+function buildOrderDates(){
+  const start = $("#orderDate").value, end = $("#orderDateEnd").value;
+  if(!start) return [];
+  if(!end || end < start) return [start];
+  const out = []; let d = new Date(start+"T00:00:00"); const e = new Date(end+"T00:00:00");
+  while(d <= e && out.length < 5){ out.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1); }
+  return out;
+}
+
+function updateOrderSummary(){
+  const box = $("#orderSummary"); if(!box) return;
+  const from = $("#orderFrom").value.trim(), to = $("#orderTo").value.trim();
+  const dates = buildOrderDates();
+  const seats = checkedValues("orderSeatTypes");
+  const pax = orderUI.paxLoaded.filter(p=>orderUI.paxSelected.has(p.id)).map(p=>p.name);
+  if(!from || !to || !dates.length){ box.textContent = "填好出发地、目的地、日期后，这里会显示抢票概要。"; return; }
+  let html = `🎯 <b>${escHtml(from)} → ${escHtml(to)}</b>　日期 ${dates.map(escHtml).join(" / ")}`;
+  html += `<br>抢的坐席：${seats.length?seats.map(escHtml).join(" / "):'<span style="color:#b45309;">未勾选</span>'}`;
+  if($("#orderAllowExtend").checked) html += `　·　买长乘短 前后各 ${escHtml($("#orderExtend").value)} 站`;
+  html += `<br>乘车人：${pax.length?escHtml(pax.join("、"))+`（${pax.length} 张）`:'<span style="color:#b45309;">未选择</span>'}`;
+  box.innerHTML = html;
+}
+
+// —— 测试微信通知（复用 query 的逻辑）——
+$("#orderWxTest").addEventListener("click", ()=>realWxTest("order"));
+async function realWxTest(prefix){
+  const c = saveOrderWx();
+  const st = $("#orderStatus");
+  if(!c.token){ st.textContent = "请先粘贴通知 token"; st.style.color="#b91c1c"; return; }
+  st.textContent = "发送测试中…"; st.style.color="var(--gray)";
+  try {
+    const r = await fetch("/api/notify", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({channel:c.channel, token:c.token, title:"🎫 抢票通知·测试",
+        body:"收到这条就说明抢到票时能通知到你。"})});
+    const j = await r.json();
+    st.textContent = j.ok ? "✅ 已发送，查收微信" : ("❌ "+(j.error||"失败"));
+    st.style.color = j.ok ? "#16a34a" : "#b91c1c";
+  } catch(_){ st.textContent="❌ 请求失败"; st.style.color="#b91c1c"; }
+}
+
+// —— 创建抢票任务 ——
+$("#orderCreate").addEventListener("click", async ()=>{
+  if(!orderUI.loggedIn){ alert("请先扫码登录 12306"); return; }
+  const from = $("#orderFrom").value.trim(), to = $("#orderTo").value.trim();
+  const dates = buildOrderDates();
+  if(!from || !to || !dates.length){ alert("请填写出发地、目的地和日期"); return; }
+  const pax = [...orderUI.paxSelected];
+  if(!pax.length){ alert("请至少选择一位乘车人"); return; }
+  const seatTypes = checkedValues("orderSeatTypes");
+  if(!seatTypes.length){ alert("请至少勾选一个要抢的坐席"); return; }
+  const c = saveOrderWx();
+  const body = {
+    from, to, dates,
+    train_types: checkedValues("orderTrainTypes"),
+    train_names: ($("#orderTrainNames").value||"").split(/[,，\s]+/).map(s=>s.trim()).filter(Boolean),
+    seat_types: seatTypes,
+    allow_extend: $("#orderAllowExtend").checked,
+    extend: +$("#orderExtend").value || 1,
+    interval: Math.max(5, Math.min(3600, +$("#orderInterval").value || 15)),
+    passenger_ids: pax,
+    channel: ($("#orderWxEnable").checked ? c.channel : ""),
+    token: ($("#orderWxEnable").checked ? c.token : ""),
+  };
+  const btn = $("#orderCreate"); btn.disabled = true; const old = btn.textContent; btn.textContent = "创建中…";
+  try {
+    const r = await fetch("/api/order/create", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if(j.ok){
+      $("#orderStatus").textContent = "✅ 已开始后台抢票"; $("#orderStatus").style.color = "#16a34a";
+      refreshOrderJobs();
+    } else { alert(j.error||"创建失败"); }
+  } catch(e){ alert("请求失败："+e.message); }
+  finally { btn.disabled = false; btn.textContent = old; }
+});
+
+// —— 任务列表 ——
+$("#orderRefreshJobs").addEventListener("click", refreshOrderJobs);
+const ORDER_STATUS_TEXT = {running:"抢票中", stopped:"已停止", done:"已抢到", error:"出错"};
+function orderJobHtml(j){
+  const dates = (j.dates||[]).join(" / ");
+  const seats = (j.seat_types||[]).join("/") || "全部席别";
+  const names = (j.passengers||[]).join("、");
+  const ext = j.allow_extend ? ` · 买长乘短±${j.extend}站` : "";
+  const stxt = ORDER_STATUS_TEXT[j.status] || j.status;
+  const stopBtn = (j.status==="running" || j.status==="error")
+    ? `<button class="jbtn" data-ostop="${j.id}">停止</button>` : "";
+  const startBtn = (j.status==="stopped" || j.status==="error")
+    ? `<button class="jbtn" data-ostart="${j.id}">继续</button>` : "";
+  const info = j.order_info ? `<div class="jmeta" style="margin-top:6px;color:#166534;">🎉 ${j.order_info}</div>` : "";
+  return `<div class="order-job" data-id="${j.id}">
+    <div class="jhead">
+      <span class="sdot ${j.status}"></span>
+      <span class="jroute">${j.route}</span>
+      <span class="jmeta">${dates} · ${seats}${ext} · 每 ${j.interval}s · 乘车人 ${names}</span>
+      <span class="jbtns">
+        <button class="jbtn" data-olog="${j.id}">日志</button>
+        ${startBtn}
+        ${stopBtn}
+        <button class="jbtn danger" data-odel="${j.id}">删除</button>
+      </span>
+    </div>
+    <div class="jmeta" style="margin-top:6px;">
+      状态：<b>${stxt}</b> · 第 ${j.cycle} 轮 · 上次检查 ${j.last_check||"—"}
+      ${j.last_msg?` · ${j.last_msg}`:""}
+      ${j.last_error?` · <span style="color:#b91c1c;">${j.last_error}</span>`:""}
+    </div>
+    ${info}
+    <div class="jlog" id="olog-${j.id}"></div>
+  </div>`;
+}
+async function refreshOrderJobs(){
+  try {
+    const r = await fetch("/api/order/list");
+    const j = await r.json();
+    const box = $("#orderJobList");
+    if(!j.ok || !j.jobs.length){ box.innerHTML = `<div class="jmeta" style="color:var(--gray);">暂无抢票任务</div>`; return; }
+    // 保留已展开的日志
+    const open = [...document.querySelectorAll(".jlog.show")].map(el=>el.id);
+    box.innerHTML = j.jobs.map(orderJobHtml).join("");
+    open.forEach(id=>{ const el = byId(id); if(el){ el.classList.add("show"); loadOrderLog(id.replace("olog-","")); } });
+  } catch(_){}
+}
+async function loadOrderLog(jid){
+  try {
+    const r = await fetch("/api/order/"+jid);
+    const j = await r.json();
+    const el = byId("olog-"+jid); if(!el || !j.ok) return;
+    const logs = j.job.log || [];
+    el.innerHTML = logs.length ? logs.map(l=>`<div>${l.time}　${l.text}</div>`).join("")
+                              : '<div style="color:var(--gray);">暂无日志</div>';
+  } catch(_){}
+}
+$("#orderJobList").addEventListener("click", async (e)=>{
+  const log = e.target.closest("[data-olog]");
+  const start = e.target.closest("[data-ostart]");
+  const stop = e.target.closest("[data-ostop]");
+  const del  = e.target.closest("[data-odel]");
+  if(log){
+    const el = byId("olog-"+log.dataset.olog);
+    el.classList.toggle("show");
+    if(el.classList.contains("show")) loadOrderLog(log.dataset.olog);
+    return;
+  }
+  if(start){
+    await fetch("/api/order/start", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({id:start.dataset.ostart})});
+    refreshOrderJobs(); return;
+  }
+  if(stop){
+    await fetch("/api/order/stop", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({id:stop.dataset.ostop})});
+    refreshOrderJobs(); return;
+  }
+  if(del){
+    if(!confirm("确定删除该抢票任务？")) return;
+    await fetch("/api/order/delete", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({id:del.dataset.odel})});
+    refreshOrderJobs(); return;
+  }
+});
 </script>
 </body>
 </html>

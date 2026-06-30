@@ -239,6 +239,8 @@ def query_tickets(from_code: str, to_code: str, date: str) -> list[dict]:
             "no_from":      cols[16],          # 车次内出发站序号（查票价用）
             "no_to":        cols[17],          # 车次内到达站序号（查票价用）
             "seat_code":    cols[35] if len(cols) > 35 else "",  # 座位类型代码串（查票价用）
+            "secret_str":   cols[0],           # 下单 submitOrderRequest 必需（URL 编码）
+            "can_buy":      cols[11],           # "Y"=可购 / "N"=不可 / IS_TIME_NOT_BUY 等
             "seats":        seats,
         })
     return trains

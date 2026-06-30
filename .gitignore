@@ -1,0 +1,21 @@
+# 运行时生成：托管监控任务（含推送 token，勿提交）
+monitor_jobs.json
+
+# 运行时生成：自动抢票任务（含推送 token，勿提交）
+order_jobs.json
+
+# 运行时生成：12306 登录态 Cookie（敏感，绝不能提交）
+login_session.json
+
+# Chrome DevTools 导出的临时 12306 Cookie（敏感）
+qp_12306_cookies.json
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# 虚拟环境
+.venv/
