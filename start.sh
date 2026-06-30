@@ -18,11 +18,22 @@ if [ ! -x "$PY" ]; then
   echo "✅ 依赖安装完成"
 fi
 
-# 2. 关掉可能已在运行的旧服务，避免端口被占用
+# 2. 读取访问令牌（没有就自动生成一个，存到 .app_token，仅本机可读）
+TOKEN_FILE=".app_token"
+if [ ! -f "$TOKEN_FILE" ]; then
+  python3 -c "import secrets; print(secrets.token_urlsafe(24))" > "$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE"
+  echo "🔑 已生成新的访问令牌：$TOKEN_FILE"
+fi
+export APP_TOKEN="$(cat "$TOKEN_FILE")"
+
+# 3. 关掉可能已在运行的旧服务，避免端口被占用
 pkill -f "app.py" 2>/dev/null || true
 sleep 1
 
-# 3. 启动
+# 4. 启动
 echo "🚄 正在启动服务…  打开浏览器访问 http://127.0.0.1:$PORT"
+echo "   🔑 首次打开页面，点右上角「令牌」填入下面这串（之后浏览器会记住）："
+echo "      $APP_TOKEN"
 echo "   按 Ctrl+C 停止"
 exec "$PY" app.py

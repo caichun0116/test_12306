@@ -28,6 +28,10 @@ from order_service import MANAGER as ORDER_MANAGER
 
 app = Flask(__name__)
 _PASSENGER_KEY_SALT = os.environ.get("PASSENGER_KEY_SALT") or os.urandom(16).hex()
+# 共享 Token 鉴权：设了 APP_TOKEN 则所有接口需带 X-App-Token 头；
+# 未设置时仅放行本机（127.0.0.1），避免内网穿透后被陌生人用你的账号下单。
+_APP_TOKEN = (os.environ.get("APP_TOKEN") or "").strip()
+_LOCAL_ADDRS = {"127.0.0.1", "::1"}
 _CHROME_DEBUG_URL = "http://127.0.0.1:9222"
 _CHROME_PROFILE_DIR = "/tmp/qp-chrome-12306"
 _OFFICIAL_LOGIN_URL = "https://kyfw.12306.cn/otn/resources/login.html"
@@ -138,11 +142,33 @@ ws.onerror = (err) => {
 
     login = order12306.LOGIN
     order12306._load_cookies(login.s.cookies, cookies)
-    login.logged_in = login.check_online()
+    login.logged_in = login.check_online(force=True)
     if login.logged_in:
         login._save()
         return True, "已导入官方网页登录态", len(cookies)
     return False, "已读取 Cookie，但 12306 校验未登录，请在官方页面重新扫码确认", len(cookies)
+
+
+@app.before_request
+def _require_token():
+    """统一鉴权钩子。
+
+    - 始终放行首页与静态资源（页面要先加载才能录入 token）及预检。
+    - 未配置 APP_TOKEN：仅允许本机访问（开发/单机模式）。
+    - 配置了 APP_TOKEN：所有其它请求必须带正确的 X-App-Token 头。
+    """
+    if request.method == "OPTIONS":
+        return None
+    if request.endpoint in (None, "index", "static"):
+        return None
+    if not _APP_TOKEN:
+        if request.remote_addr in _LOCAL_ADDRS:
+            return None
+        return jsonify({"ok": False, "error": "未授权（未配置 APP_TOKEN，仅本机可访问）"}), 403
+    sent = request.headers.get("X-App-Token", "")
+    if hmac.compare_digest(sent, _APP_TOKEN):
+        return None
+    return jsonify({"ok": False, "error": "未授权：请在页面右上角填写访问令牌"}), 401
 
 
 @app.route("/")

@@ -24,12 +24,20 @@ if ! command -v cloudflared >/dev/null 2>&1; then
   exit 1
 fi
 
-# 3. 关掉可能残留的旧进程
+# 3. 读取访问令牌（公网暴露时必须有，否则任何人都能用你的账号下单）
+TOKEN_FILE=".app_token"
+if [ ! -f "$TOKEN_FILE" ]; then
+  python3 -c "import secrets; print(secrets.token_urlsafe(24))" > "$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE"
+fi
+export APP_TOKEN="$(cat "$TOKEN_FILE")"
+
+# 4. 关掉可能残留的旧进程
 pkill -f "app.py" 2>/dev/null || true
 pkill -f "cloudflared tunnel" 2>/dev/null || true
 sleep 1
 
-# 4. 后台启动 Flask（关 debug、开多线程，仅监听本机，由隧道转发）
+# 5. 后台启动 Flask（关 debug、开多线程，仅监听本机，由隧道转发；带 APP_TOKEN 鉴权）
 echo "🚄 启动本地服务…"
 FLASK_DEBUG=0 HOST=127.0.0.1 PORT=$PORT "$PY" app.py > /tmp/qiangpiao_app.log 2>&1 &
 APP_PID=$!
@@ -52,7 +60,9 @@ done
 echo ""
 echo "🌍 正在生成公网网址（下面那条 https://xxxx.trycloudflare.com 就是，发给朋友即可）"
 echo "   ⚠️  此网址临时有效：本窗口关闭 / 按 Ctrl+C 后即失效"
+echo "🔑 访问令牌（必须连同网址一起给对方；打开页面点右上角「令牌」填入）："
+echo "      $APP_TOKEN"
 echo "──────────────────────────────────────────────"
 
-# 5. 前台运行隧道（它会打印公网网址）
+# 6. 前台运行隧道（它会打印公网网址）
 cloudflared tunnel --url "http://127.0.0.1:$PORT"

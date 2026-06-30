@@ -10,6 +10,12 @@ login_session.json
 # Chrome DevTools 导出的临时 12306 Cookie（敏感）
 qp_12306_cookies.json
 
+# 本地加密密钥（绝不能提交：泄露则等于敏感文件可解密）
+.secret.key
+
+# 访问令牌（绝不能提交：泄露则等于鉴权失效）
+.app_token
+
 # macOS
 .DS_Store
 

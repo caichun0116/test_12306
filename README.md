@@ -35,6 +35,28 @@ python3 -m venv .venv
 
 打开浏览器访问 http://127.0.0.1:5001 （可用环境变量 `PORT` 改端口）
 
+### ⚠️ 对外分享时务必设置访问令牌
+
+本服务带自动登录态与自动下单能力，**任何能访问到它的人都能用你的 12306 账号下单**。
+
+`start.sh` / `share.sh` 已自动处理令牌：首次运行会在 `.app_token`（仅本机可读、已 gitignore）里生成一串随机令牌，并在启动时打印出来，浏览器打开页面点右上角「🔑 令牌」填入同一串即可（之后浏览器记住）。
+
+```bash
+./start.sh     # 本机使用：会打印令牌
+./share.sh     # 对外分享：连同公网网址一起打印令牌，发给对方
+```
+
+- 仅本机使用：未设令牌时服务也只接受 `127.0.0.1` 的请求；用 `start.sh` 则统一带令牌。
+- 经 cloudflared / 端口转发对外暴露时：**必须**有令牌（`share.sh` 已强制设置），否则隧道会把请求显示成本机来源从而绕过本机限制。
+
+手动指定令牌（不走脚本时）：
+```bash
+APP_TOKEN='换成你自己的强随机串' .venv/bin/python app.py
+```
+
+其它环境变量：`HOST`（监听地址，默认 `127.0.0.1`）、`PORT`（端口）、`FLASK_DEBUG`（对外分享时务必不要开）。
+敏感文件（`login_session.json` 登录 Cookie、`order_jobs.json`/`monitor_jobs.json` 推送 token）会用本地密钥 `.secret.key` 加密落盘（安装了 `cryptography` 时）；这些文件均已 gitignore。
+
 ## 文件说明
 
 | 文件                  | 作用                                                       |

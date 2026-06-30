@@ -68,7 +68,25 @@
       "Bash(python3 -c \"import ticket; print\\('import OK'\\); print\\('helpers:', hasattr\\(ticket,'_alt_segments'\\), hasattr\\(ticket,'_RATE'\\), ticket.MAX_WORKERS\\)\")",
       "Bash(git clean *)",
       "Bash(/bin/ls -la)",
-      "Bash(grep -vE '^$')"
+      "Bash(grep -vE '^$')",
+      "Bash(python -m py_compile app.py order12306.py order_service.py ticket.py)",
+      "Bash(./.venv/bin/python -m py_compile app.py order12306.py order_service.py ticket.py monitor_service.py)",
+      "Bash(PORT=5099 HOST=127.0.0.1 ./.venv/bin/python app.py)",
+      "Bash(curl -s -o /dev/null -w \"index HTTP %{http_code}\\\\n\" http://127.0.0.1:5099/)",
+      "Bash(curl -s http://127.0.0.1:5099/api/order/login/check)",
+      "Bash(curl -s http://127.0.0.1:5099/api/order/list)",
+      "Bash(curl -s http://127.0.0.1:5099/api/order/passengers)",
+      "Bash(curl -s -X POST http://127.0.0.1:5099/api/order/login/qr)",
+      "Bash(curl -s -X POST http://127.0.0.1:5099/api/order/login/status)",
+      "Bash(./.venv/bin/python -m py_compile app.py order_service.py)",
+      "Bash(PORT=5099 ./.venv/bin/python app.py)",
+      "Bash(curl -s -X POST http://127.0.0.1:5099/api/order/create -H 'Content-Type: application/json' -d '{\"from\":\"北京南\",\"to\":\"上海虹桥\",\"dates\":[\"2026-07-01\"],\"seat_types\":[],\"passenger_ids\":[\"x\"]}')",
+      "Bash(curl -s -X POST http://127.0.0.1:5099/api/order/create -H 'Content-Type: application/json' -d '{\"from\":\"北京南\",\"to\":\"上海虹桥\",\"dates\":[\"2026-07-01\"],\"seat_types\":[\"二等座\"],\"passenger_ids\":[\"x\"]}')",
+      "Bash(./.venv/bin/python -m py_compile app.py order12306.py order_service.py ticket.py)",
+      "Bash(./.venv/bin/python -m py_compile order12306.py)",
+      "Bash(./.venv/bin/python -)",
+      "Bash(grep -iE 'session|jobs|cookie|\\\\.json$')",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

@@ -29,6 +29,7 @@ from urllib.parse import unquote
 import requests
 
 import ticket   # 复用站点字典 / 余票查询 / secretStr 抓取
+import cryptobox  # 敏感数据（登录 Cookie）加密落盘
 
 
 _SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -113,17 +114,30 @@ class LoginSession:
         self.username = ""           # 登录成功后的用户名（来自 uamtk）
         self.logged_in = False
         self._qr_uuid = ""           # 当前二维码的会话标识
+        # check_online() 的短 TTL 缓存：避免前端轮询 / 每轮 tick 都打网络
+        self._online_cache_val = False
+        self._online_cache_at = 0.0
         self._restore()
 
-    # ── Cookie 持久化 ──
+    # ── Cookie 持久化（敏感，整体加密落盘）──
     def _save(self):
         try:
-            data = {
+            payload = json.dumps({
                 "cookies": _dump_cookiejar(self.s.cookies),
                 "username": self.username,
-            }
+            }, ensure_ascii=False)
+            cryptobox.warn_if_plaintext("12306 登录 Cookie")
+            # 能加密则写 {"enc": "<密文>"}；否则降级明文（chmod 0600）
+            if cryptobox.available():
+                out = {"enc": cryptobox.encrypt_str(payload)}
+            else:
+                out = json.loads(payload)
             with open(_SESSION_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
+                json.dump(out, f, ensure_ascii=False)
+            try:
+                os.chmod(_SESSION_FILE, 0o600)
+            except OSError:
+                pass
         except OSError:
             pass
 
@@ -132,15 +146,35 @@ class LoginSession:
             return
         try:
             with open(_SESSION_FILE, encoding="utf-8") as f:
-                data = json.load(f)
+                raw = json.load(f)
         except (OSError, json.JSONDecodeError):
             return
+        legacy_plaintext = False
+        if isinstance(raw, dict) and raw.get("enc"):
+            dec = cryptobox.decrypt_str(raw["enc"])
+            if not dec:                 # 缺钥/缺库/损坏：视为未登录
+                return
+            try:
+                data = json.loads(dec)
+            except json.JSONDecodeError:
+                return
+        else:
+            data = raw                  # 旧明文格式（含 "cookies" 键）
+            legacy_plaintext = True
         cookies = data.get("cookies") or {}
         if cookies:
             _load_cookies(self.s.cookies, cookies)
             self.username = data.get("username", "")
-            # 恢复后异步校验，避免启动卡顿；这里直接探测一次
-            self.logged_in = self.check_online()
+            # 旧明文 + 现在能加密：透明升级为加密落盘
+            if legacy_plaintext and cryptobox.available():
+                self._save()
+            # 恢复后后台异步校验，避免阻塞进程启动（断网/慢网时同步探活会卡住
+            # Flask 起服务）。初始保守置为未登录，后台探活成功后再翻转为 True；
+            # 在此之前的调用方（_tick / api_order_create / submit_order）都会在
+            # logged_in 为假时自行回退 check_online()，因此语义安全、可自愈。
+            self.logged_in = False
+            threading.Thread(target=self.check_online, kwargs={"force": True},
+                             daemon=True, name="login-restore-probe").start()
 
     def clear(self):
         with self._lock:
@@ -148,6 +182,9 @@ class LoginSession:
             self.username = ""
             self.logged_in = False
             self._qr_uuid = ""
+            # 登出后让缓存立即反映「未登录」，不被 30s 内的旧 True 掩盖
+            self._online_cache_val = False
+            self._online_cache_at = time.monotonic()
         try:
             if os.path.exists(_SESSION_FILE):
                 os.remove(_SESSION_FILE)
@@ -329,6 +366,9 @@ class LoginSession:
         self.username = j.get("username", "") or self.username
         with self._lock:
             self.logged_in = True
+            # 刚登录成功，缓存立即置 True，避免随后探活再打一次网络
+            self._online_cache_val = True
+            self._online_cache_at = time.monotonic()
         self._save()
         return True, "登录成功"
 
@@ -419,17 +459,30 @@ class LoginSession:
     # ──────────────────────────────────────
     # 在线状态
     # ──────────────────────────────────────
-    def check_online(self) -> bool:
-        """探测当前 Cookie 是否仍是登录态。"""
+    _ONLINE_TTL = 30.0   # 秒：探活结果缓存时长
+
+    def check_online(self, force: bool = False) -> bool:
+        """探测当前 Cookie 是否仍是登录态。
+
+        带 ~30s TTL 缓存：前端轮询 / 每轮 tick 频繁调用时复用结果，避免高频打网络
+        （也降低风控）。需要实时结果的场景（Cookie 导入、登录后校验）传 force=True。
+        外部 session 失效最多 TTL 后才被察觉，可接受。
+        """
+        now = time.monotonic()
+        if not force and (now - self._online_cache_at) < self._ONLINE_TTL:
+            return self._online_cache_val
         try:
             r = self.s.post(f"{_BASE}/otn/login/checkUser",
                             data={"_json_att": ""}, timeout=10)
             r.raise_for_status()
             j = r.json()
         except (requests.RequestException, json.JSONDecodeError):
-            return False
+            # 网络抖动不污染缓存（不更新时间戳）：登录态以上次成功探测为准
+            return self._online_cache_val if not force else False
         flag = bool((j.get("data") or {}).get("flag"))
         self.logged_in = flag
+        self._online_cache_val = flag
+        self._online_cache_at = now
         return flag
 
     def status(self) -> dict:

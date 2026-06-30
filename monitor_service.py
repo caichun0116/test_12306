@@ -17,11 +17,14 @@ monitor_jobs.json，进程重启后自动恢复 running 任务。
 import os
 import json
 import uuid
+import random
 import threading
 from datetime import datetime
 
 import ticket
 import notify
+import cryptobox
+from persist import DebouncedJsonStore
 
 _JOBS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "monitor_jobs.json")
@@ -52,9 +55,9 @@ class Job:
         self.interval    = max(15, min(int(cfg.get("interval", 30)), 3600))
         self.price_max   = cfg.get("price_max")
         self.with_price  = bool(cfg.get("with_price"))
-        # —— 推送配置 ——
+        # —— 推送配置 ——（token 落盘加密，读取时若是密文则解密）
         self.channel     = (cfg.get("channel") or "").strip()
-        self.token       = (cfg.get("token") or "").strip()
+        self.token       = cryptobox.decrypt_str((cfg.get("token") or "").strip())
         # —— 运行态 ——
         self.status      = "stopped"     # running / stopped / error
         self.cycle       = 0
@@ -76,7 +79,7 @@ class Job:
             "seat_types": self.seat_types, "train_names": self.train_names,
             "extend": self.extend, "interval": self.interval,
             "price_max": self.price_max, "with_price": self.with_price,
-            "channel": self.channel, "token": self.token,
+            "channel": self.channel, "token": cryptobox.encrypt_str(self.token),
             "status": self.status, "created": self.created,
             "found_log": self.found_log[-_FOUND_LOG_MAX:],
             "notified": list(self.notified),
@@ -128,8 +131,9 @@ class Job:
                     self.status = "running"
             self.last_check = _now()
             self.cycle += 1
-            # 可被 stop() 立即唤醒
-            self._stop.wait(self.interval)
+            # 可被 stop() 立即唤醒；±20% 抖动，错开固定节拍降低风控识别
+            jitter = self.interval * 0.2
+            self._stop.wait(max(1.0, self.interval + random.uniform(-jitter, jitter)))
 
     def _tick(self):
         """查一轮所有日期，检测新出现的有票/买长乘短并推送。"""
@@ -236,6 +240,8 @@ class MonitorManager:
     def __init__(self):
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        # 监控只在 create/stop/delete 时落盘（低频），用共享 store 拿到原子写 + atexit 兜底
+        self._store = DebouncedJsonStore(_JOBS_FILE, self._serialize)
         self._load()
 
     # ── 对外 API ──
@@ -274,14 +280,13 @@ class MonitorManager:
         return True
 
     # ── 持久化 ──
-    def _save(self):
+    def _serialize(self) -> list:
         with self._lock:
-            data = [j.to_config() for j in self._jobs.values()]
-        try:
-            with open(_JOBS_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except OSError:
-            pass
+            return [j.to_config() for j in self._jobs.values()]
+
+    def _save(self):
+        # create/stop/delete 都期望立即可见，直接同步刷盘（原子写）
+        self._store.flush_now()
 
     def _load(self):
         if not os.path.exists(_JOBS_FILE):

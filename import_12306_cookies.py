@@ -14,7 +14,7 @@ def main() -> int:
     cookies = json.loads(COOKIE_FILE.read_text())
     login = order12306.LOGIN
     order12306._load_cookies(login.s.cookies, cookies)
-    login.logged_in = login.check_online()
+    login.logged_in = login.check_online(force=True)
     login._save()
     print(json.dumps({
         "ok": login.logged_in,
