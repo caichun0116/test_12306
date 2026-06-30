@@ -14,6 +14,7 @@ import os
 import hmac
 import hashlib
 import json
+import secrets
 import subprocess
 import urllib.error
 import urllib.request
@@ -27,14 +28,51 @@ import order12306
 from order_service import MANAGER as ORDER_MANAGER
 
 app = Flask(__name__)
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _PASSENGER_KEY_SALT = os.environ.get("PASSENGER_KEY_SALT") or os.urandom(16).hex()
-# 共享 Token 鉴权：设了 APP_TOKEN 则所有接口需带 X-App-Token 头；
-# 未设置时仅放行本机（127.0.0.1），避免内网穿透后被陌生人用你的账号下单。
-_APP_TOKEN = (os.environ.get("APP_TOKEN") or "").strip()
+# 共享 Token 鉴权：所有非首页/静态接口都需带 X-App-Token。
+_APP_TOKEN_FILE = os.path.join(_BASE_DIR, ".app_token")
 _LOCAL_ADDRS = {"127.0.0.1", "::1"}
 _CHROME_DEBUG_URL = "http://127.0.0.1:9222"
 _CHROME_PROFILE_DIR = "/tmp/qp-chrome-12306"
 _OFFICIAL_LOGIN_URL = "https://kyfw.12306.cn/otn/resources/login.html"
+
+
+def _write_secret_file(path: str, value: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, (value + "\n").encode("utf-8"))
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _load_app_token() -> tuple[str, str]:
+    env_token = (os.environ.get("APP_TOKEN") or "").strip()
+    if env_token:
+        return env_token, "env"
+    try:
+        if os.path.exists(_APP_TOKEN_FILE):
+            try:
+                os.chmod(_APP_TOKEN_FILE, 0o600)
+            except OSError:
+                pass
+            with open(_APP_TOKEN_FILE, encoding="utf-8") as f:
+                token = f.read().strip()
+            if token:
+                return token, "file"
+        token = secrets.token_urlsafe(24)
+        _write_secret_file(_APP_TOKEN_FILE, token)
+        return token, "generated"
+    except OSError:
+        # 极端情况下无法写令牌文件时才回退本机来源限制。
+        return "", "none"
+
+
+_APP_TOKEN, _APP_TOKEN_SOURCE = _load_app_token()
 
 
 def _resolve_station(value: str):
@@ -92,6 +130,7 @@ def _open_official_chrome():
     subprocess.Popen([
         "open", "-na", "Google Chrome", "--args",
         "--remote-debugging-port=9222",
+        "--remote-debugging-address=127.0.0.1",
         f"--user-data-dir={_CHROME_PROFILE_DIR}",
         "--no-first-run",
         "--new-window",
@@ -154,8 +193,8 @@ def _require_token():
     """统一鉴权钩子。
 
     - 始终放行首页与静态资源（页面要先加载才能录入 token）及预检。
-    - 未配置 APP_TOKEN：仅允许本机访问（开发/单机模式）。
-    - 配置了 APP_TOKEN：所有其它请求必须带正确的 X-App-Token 头。
+    - 默认读取/生成 .app_token；所有其它请求必须带正确的 X-App-Token 头。
+    - 仅当令牌文件也无法读写时，才退回仅允许本机访问。
     """
     if request.method == "OPTIONS":
         return None
@@ -164,7 +203,7 @@ def _require_token():
     if not _APP_TOKEN:
         if request.remote_addr in _LOCAL_ADDRS:
             return None
-        return jsonify({"ok": False, "error": "未授权（未配置 APP_TOKEN，仅本机可访问）"}), 403
+        return jsonify({"ok": False, "error": "未授权（令牌不可用，仅本机可访问）"}), 403
     sent = request.headers.get("X-App-Token", "")
     if hmac.compare_digest(sent, _APP_TOKEN):
         return None
@@ -466,5 +505,8 @@ if __name__ == "__main__":
     host  = os.environ.get("HOST", "127.0.0.1")
     port  = int(os.environ.get("PORT", "5001"))
     debug = os.environ.get("FLASK_DEBUG") == "1"
+    if _APP_TOKEN and _APP_TOKEN_SOURCE != "env":
+        print("🔑 访问令牌（页面右上角「令牌」填入）：", flush=True)
+        print(f"   {_APP_TOKEN}", flush=True)
     # threaded=True：允许多人同时查询，避免一个人的延伸查询把别人卡住
     app.run(host=host, port=port, debug=debug, threaded=True)

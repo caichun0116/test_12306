@@ -16,6 +16,9 @@ if [ ! -x "$PY" ]; then
   python3 -m venv "$VENV"
   "$PY" -m pip install -q --upgrade pip
   "$PY" -m pip install -q -r requirements.txt
+elif ! "$PY" -c "import flask, requests, cryptography" >/dev/null 2>&1; then
+  echo "🔧 检测到依赖缺失，正在补装 requirements.txt…"
+  "$PY" -m pip install -q -r requirements.txt
 fi
 
 # 2. 检查 cloudflared
@@ -26,10 +29,10 @@ fi
 
 # 3. 读取访问令牌（公网暴露时必须有，否则任何人都能用你的账号下单）
 TOKEN_FILE=".app_token"
-if [ ! -f "$TOKEN_FILE" ]; then
+if [ ! -s "$TOKEN_FILE" ]; then
   python3 -c "import secrets; print(secrets.token_urlsafe(24))" > "$TOKEN_FILE"
-  chmod 600 "$TOKEN_FILE"
 fi
+chmod 600 "$TOKEN_FILE"
 export APP_TOKEN="$(cat "$TOKEN_FILE")"
 
 # 4. 关掉可能残留的旧进程

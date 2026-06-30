@@ -35,27 +35,28 @@ python3 -m venv .venv
 
 打开浏览器访问 http://127.0.0.1:5001 （可用环境变量 `PORT` 改端口）
 
-### ⚠️ 对外分享时务必设置访问令牌
+### ⚠️ 服务默认启用访问令牌
 
 本服务带自动登录态与自动下单能力，**任何能访问到它的人都能用你的 12306 账号下单**。
 
-`start.sh` / `share.sh` 已自动处理令牌：首次运行会在 `.app_token`（仅本机可读、已 gitignore）里生成一串随机令牌，并在启动时打印出来，浏览器打开页面点右上角「🔑 令牌」填入同一串即可（之后浏览器记住）。
+服务会读取或生成 `.app_token`（仅本机可读、已 gitignore）作为访问令牌；`start.sh` / `share.sh` 会在启动时打印出来。浏览器打开页面后点右上角「🔑 令牌」填入同一串即可（之后浏览器记住）。
 
 ```bash
 ./start.sh     # 本机使用：会打印令牌
 ./share.sh     # 对外分享：连同公网网址一起打印令牌，发给对方
 ```
 
-- 仅本机使用：未设令牌时服务也只接受 `127.0.0.1` 的请求；用 `start.sh` 则统一带令牌。
-- 经 cloudflared / 端口转发对外暴露时：**必须**有令牌（`share.sh` 已强制设置），否则隧道会把请求显示成本机来源从而绕过本机限制。
+- 仅本机使用：也建议填写令牌；`start.sh` 和手动启动都会打印当前令牌。
+- 手动运行 `.venv/bin/python app.py`：也会自动读取或生成 `.app_token` 并在终端打印。
+- 经 cloudflared / 端口转发对外暴露时：**必须**带令牌（`share.sh` 已强制设置），否则任何拿到公网地址的人都可能操作你的账号。
 
 手动指定令牌（不走脚本时）：
 ```bash
 APP_TOKEN='换成你自己的强随机串' .venv/bin/python app.py
 ```
 
-其它环境变量：`HOST`（监听地址，默认 `127.0.0.1`）、`PORT`（端口）、`FLASK_DEBUG`（对外分享时务必不要开）。
-敏感文件（`login_session.json` 登录 Cookie、`order_jobs.json`/`monitor_jobs.json` 推送 token）会用本地密钥 `.secret.key` 加密落盘（安装了 `cryptography` 时）；这些文件均已 gitignore。
+其它环境变量：`HOST`（监听地址，默认 `127.0.0.1`）、`PORT`（端口）、`FLASK_DEBUG`（对外分享时务必不要开）、`ORDER_MAX_PARALLEL_TICKS`（自动抢票任务同时查询轮数，默认 `2`）。
+敏感文件均已 gitignore，并会用 `0600` 权限落盘。安装了 `cryptography` 时，`login_session.json` 会整体加密，`order_jobs.json` / `monitor_jobs.json` 中的推送 token 会字段级加密。
 
 ## 文件说明
 
@@ -64,6 +65,9 @@ APP_TOKEN='换成你自己的强随机串' .venv/bin/python app.py
 | `app.py`              | Flask 后端：查询 / 站点 / 票价 / 下单链接 / 推送 / 监控接口 |
 | `ticket.py`           | 核心逻辑：余票、经停站、票价、买长乘短延伸、官方深链        |
 | `monitor_service.py`  | 服务端常驻监控：后台线程定时查 + 有票推微信 + 持久化恢复    |
+| `order_service.py`    | 自动抢票任务管理：轮询余票、触发占座、持久化任务状态         |
+| `cryptobox.py`        | 本地敏感字段加密，密钥保存在 gitignore 的 `.secret.key`      |
+| `persist.py`          | JSON 防抖落盘与 `0600` 权限原子写                            |
 | `notify.py`           | 微信推送（PushPlus / Server酱 / 企业微信）与卡片渲染        |
 | `templates/index.html`| 查询页面（表单 + 结果 + 托管监控面板）                     |
 | `monitor.py`          | 原有的命令行余票监控脚本（独立，未改动）                   |

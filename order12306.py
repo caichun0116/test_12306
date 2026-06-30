@@ -30,6 +30,7 @@ import requests
 
 import ticket   # 复用站点字典 / 余票查询 / secretStr 抓取
 import cryptobox  # 敏感数据（登录 Cookie）加密落盘
+from persist import write_json_atomic
 
 
 _SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -132,12 +133,7 @@ class LoginSession:
                 out = {"enc": cryptobox.encrypt_str(payload)}
             else:
                 out = json.loads(payload)
-            with open(_SESSION_FILE, "w", encoding="utf-8") as f:
-                json.dump(out, f, ensure_ascii=False)
-            try:
-                os.chmod(_SESSION_FILE, 0o600)
-            except OSError:
-                pass
+            write_json_atomic(_SESSION_FILE, out, indent=None, mode=0o600)
         except OSError:
             pass
 

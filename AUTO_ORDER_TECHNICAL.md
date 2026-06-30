@@ -19,6 +19,8 @@
 | `ticket.py` | 12306 匿名余票查询、站点字典、车次/席别解析、买长乘短查询。 |
 | `order12306.py` | 登录态管理和真实下单链路：提交订单、确认页解析、排队、占座、查订单号。 |
 | `order_service.py` | 后台自动抢票任务管理器，每个任务一个线程。 |
+| `cryptobox.py` | 本地敏感字段加密，密钥保存在 gitignore 的 `.secret.key`。 |
+| `persist.py` | JSON 防抖落盘与 `0600` 权限原子写。 |
 | `notify.py` | 微信/企业微信等通知发送。 |
 | `import_12306_cookies.py` | 命令行辅助脚本，从 `/tmp/qp_12306_cookies.json` 导入官方 Chrome Cookie 到本地登录会话。 |
 | `login_session.json` | 本地 12306 登录态持久化文件，敏感文件，不应提交。 |
@@ -58,6 +60,7 @@
 ```bash
 open -na "Google Chrome" --args \
   --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
   --user-data-dir=/tmp/qp-chrome-12306 \
   --no-first-run \
   --new-window \
@@ -136,7 +139,7 @@ python3 import_12306_cookies.py
   - token
 - `/api/order/create` 根据 token 从后端实时乘车人列表中反查真实乘车人。
 
-后台任务为了下单需要持久化乘车人快照，因此 `order_jobs.json` 是敏感文件。
+后台任务只持久化乘车人精简快照（姓名、证件类型、乘车人类型、脱敏证件号），下单前会重新拉取当前登录态下的乘车人信息补全 `allEncStr`。因此 `order_jobs.json` 仍是敏感文件，但不再落盘明文证件号、手机号或 `allEncStr`。
 
 ## 自动抢票任务状态机
 
@@ -390,15 +393,18 @@ curl -s -X POST http://127.0.0.1:5001/api/order/stop \
 
 - `login_session.json`
 - `order_jobs.json`
+- `monitor_jobs.json`
+- `.app_token`
+- `.secret.key`
 - `/tmp/qp_12306_cookies.json`
 
-`order_jobs.json` 可能包含：
+当前落盘策略：
 
-- 乘车人姓名
-- 脱敏或原始证件字段
-- `allEncStr`
-- 手机号
-- 微信通知 webhook/token
+- `login_session.json`：安装 `cryptography` 时整体加密，文件权限 `0600`。
+- `order_jobs.json`：保存乘车人姓名、证件类型、乘车人类型、脱敏证件号、任务日志和订单状态；推送 token 字段加密，文件权限 `0600`。
+- `monitor_jobs.json`：保存监控任务和命中记录；推送 token 字段加密，文件权限 `0600`。
+- `.secret.key`：本地加密密钥，泄露后可解密本机密文，文件权限 `0600`。
+- `.app_token`：本服务访问令牌，泄露后等同接口鉴权失效，文件权限 `0600`。
 
 建议在 `.gitignore` 中忽略这些文件。
 

@@ -37,6 +37,17 @@ _LOG_MAX = 60
 _EXTEND_BUDGET = lambda ext: 40 + max(0, min(ext, 5)) * 20
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+_MAX_PARALLEL_TICKS = max(1, min(_env_int("ORDER_MAX_PARALLEL_TICKS", 2), 8))
+_TICK_GATE = threading.Semaphore(_MAX_PARALLEL_TICKS)
+
+
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -233,7 +244,8 @@ class OrderJob:
             done = False
             try:
                 self.last_error = ""
-                done = self._tick()
+                with _TICK_GATE:
+                    done = self._tick()
                 if done:
                     self.status = "done"
                     self._stop.set()
@@ -342,11 +354,13 @@ class OrderJob:
 
         # 阶段 1：并发拉各车次经停站
         workers = getattr(ticket, "MAX_WORKERS", 6)
+        def fetch_stops(t):
+            if rate:
+                rate.wait()
+            return ticket.query_stops(t["train_no"], t["from_code"],
+                                      t["to_code"], date)
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            stops_list = list(ex.map(
-                lambda t: ticket.query_stops(t["train_no"], t["from_code"],
-                                             t["to_code"], date),
-                need_ext))
+            stops_list = list(ex.map(fetch_stops, need_ext))
 
         # 阶段 2：按车次收集候选区段并全局去重（保持首现顺序，确定性）
         train_segs: dict[str, list] = {}

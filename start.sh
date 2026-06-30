@@ -16,15 +16,19 @@ if [ ! -x "$PY" ]; then
   "$PY" -m pip install -q --upgrade pip
   "$PY" -m pip install -q -r requirements.txt
   echo "✅ 依赖安装完成"
+elif ! "$PY" -c "import flask, requests, cryptography" >/dev/null 2>&1; then
+  echo "🔧 检测到依赖缺失，正在补装 requirements.txt…"
+  "$PY" -m pip install -q -r requirements.txt
+  echo "✅ 依赖检查完成"
 fi
 
 # 2. 读取访问令牌（没有就自动生成一个，存到 .app_token，仅本机可读）
 TOKEN_FILE=".app_token"
-if [ ! -f "$TOKEN_FILE" ]; then
+if [ ! -s "$TOKEN_FILE" ]; then
   python3 -c "import secrets; print(secrets.token_urlsafe(24))" > "$TOKEN_FILE"
-  chmod 600 "$TOKEN_FILE"
   echo "🔑 已生成新的访问令牌：$TOKEN_FILE"
 fi
+chmod 600 "$TOKEN_FILE"
 export APP_TOKEN="$(cat "$TOKEN_FILE")"
 
 # 3. 关掉可能已在运行的旧服务，避免端口被占用
