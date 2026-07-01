@@ -15,6 +15,7 @@ LoginSession 登录态，真正调用 12306 下单接口占座（付款仍需人
 """
 
 import os
+import time
 import uuid
 import random
 import threading
@@ -40,6 +41,57 @@ def _env_int(name: str, default: int) -> int:
 
 _MAX_PARALLEL_TICKS = max(1, min(_env_int("ORDER_MAX_PARALLEL_TICKS", 2), 8))
 _TICK_GATE = threading.Semaphore(_MAX_PARALLEL_TICKS)
+
+# 下单串行闸门：多人共用一个出口 IP 时，避免多账号同一瞬间一起冲 submitOrder
+# 触发 12306 风控。全局串行（同一时刻只放一个下单临界区）+ 全局最小间隔 +
+# 每账号最小间隔，均带抖动。间隔可用环境变量调（0 = 关闭对应间隔）。
+_ORDER_MIN_GAP = max(0.0, float(_env_int("ORDER_MIN_GAP", 3)))        # 全局相邻下单最小间隔（秒）
+_ORDER_ACCOUNT_GAP = max(0.0, float(_env_int("ORDER_ACCOUNT_GAP", 8)))  # 同一账号两次下单最小间隔（秒）
+_ORDER_GAP_JITTER = 0.3   # ±30% 抖动
+
+
+class _OrderGate:
+    """下单临界区的串行闸门 + 全局/每账号最小间隔（带抖动）。"""
+
+    def __init__(self, min_gap: float, account_gap: float):
+        self._lock = threading.Lock()          # 串行：一次只放一个下单
+        self._min_gap = min_gap
+        self._account_gap = account_gap
+        self._last_global = 0.0
+        self._last_by_account: dict[str, float] = {}
+
+    @staticmethod
+    def _jittered(gap: float) -> float:
+        if gap <= 0:
+            return 0.0
+        return gap * (1.0 + random.uniform(-_ORDER_GAP_JITTER, _ORDER_GAP_JITTER))
+
+    def acquire(self, account: str, stop: "threading.Event | None" = None):
+        """进入下单临界区（阻塞直到满足全局+账号间隔）。account 为账号标识。"""
+        self._lock.acquire()
+        while True:
+            now = time.monotonic()
+            wait_g = (self._last_global + self._jittered(self._min_gap)) - now
+            last_a = self._last_by_account.get(account, 0.0)
+            wait_a = (last_a + self._jittered(self._account_gap)) - now
+            delay = max(wait_g, wait_a, 0.0)
+            if delay <= 0:
+                return
+            # 可被任务停止立即打断
+            if stop is not None:
+                if stop.wait(min(delay, 1.0)):
+                    return
+            else:
+                time.sleep(min(delay, 1.0))
+
+    def release(self, account: str):
+        now = time.monotonic()
+        self._last_global = now
+        self._last_by_account[account] = now
+        self._lock.release()
+
+
+_ORDER_GATE = _OrderGate(_ORDER_MIN_GAP, _ORDER_ACCOUNT_GAP)
 
 
 def _now() -> str:
@@ -427,10 +479,16 @@ class OrderJob:
         passengers = self._resolve_passengers()
         if not passengers:
             return False, "乘车人信息失效，请重新选择乘车人"
-        return self.login.submit_order(
-            secret_str=cand["secret_str"], train_date=date,
-            from_name=cand["from_name"], to_name=cand["to_name"],
-            seat_type_name=cand["seat_type"], passengers=passengers)
+        # 下单串行闸门 + 全局/账号最小间隔（多人共用一个 IP 时防风控扎堆）
+        account = (getattr(self.login, "username", "") or self.owner or self.id)
+        _ORDER_GATE.acquire(account, stop=self._stop)
+        try:
+            return self.login.submit_order(
+                secret_str=cand["secret_str"], train_date=date,
+                from_name=cand["from_name"], to_name=cand["to_name"],
+                seat_type_name=cand["seat_type"], passengers=passengers)
+        finally:
+            _ORDER_GATE.release(account)
 
     def _resolve_passengers(self) -> list:
         """用当前登录态拉取最新乘客，补全最新 allEncStr。"""

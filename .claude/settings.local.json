@@ -96,7 +96,18 @@
       "Bash(python3 -c \"import sys,json;print\\(json.load\\(sys.stdin\\)\\)\")",
       "Bash(awk '{print $1, $NF}')",
       "Bash(bash -n share.sh)",
-      "Bash(bash -n start.sh)"
+      "Bash(bash -n start.sh)",
+      "Bash(pkill -f \"qp-probe-chrome\")",
+      "Bash(pkill -f \"qp-verify-chrome\")",
+      "Bash(.venv/bin/python3 /tmp/qp_diag.py)",
+      "Bash(pkill -f \"qp-chrome-mu-dbg\")",
+      "Bash(rm -rf /tmp/qp-chrome-mu-dbg)",
+      "Bash(pkill -f 'qp-chrome-mu-')",
+      "Bash(pkill -f 'qp-chrome-see')",
+      "Bash(rm -rf /tmp/qp-chrome-mu-* /tmp/qp-chrome-see* /tmp/e2e_qr.png /tmp/e2e.txt)",
+      "Bash(open /tmp/e2e_qr.png)",
+      "Bash(rm -f /tmp/e2e_qr.png /tmp/e2e.txt /tmp/e2e.log)",
+      "Bash(rm -rf /tmp/qp-chrome-mu-*)"
     ]
   }
 }
