@@ -358,37 +358,37 @@
       接口为 12306 非公开接口，可能因风控/改版失效；请仅用于<b>本人</b>购票。
     </div>
 
-    <!-- 1. 官方网页登录 -->
+    <!-- 1. 扫码登录（主入口：每人扫自己的码，各自独立） -->
     <div class="card">
       <div class="hist-head">
-        <span class="t">① 登录 12306（官方网页登录）</span>
+        <span class="t">① 扫码登录 12306（用你自己的账号）</span>
         <span class="order-status" id="loginState">检查登录状态…</span>
       </div>
       <div class="login-box">
         <div>
           <div class="login-state" id="loginInfo">尚未登录</div>
+          <div class="qr-wrap" id="qrWrap" style="margin-top:10px;">
+            <div class="mask show" id="qrMask">点「获取二维码」开始</div>
+            <img id="qrImg" alt="登录二维码" style="display:none;">
+          </div>
           <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
-            <button class="go" id="officialOpenBtn" style="padding:9px 20px;font-size:15px;">打开官方登录页</button>
-            <button class="mon" id="officialImportBtn" style="margin-left:0;">导入登录态</button>
+            <button class="go" id="qrBtn" style="padding:9px 20px;font-size:15px;">获取二维码</button>
             <button class="mon" id="loginCheckBtn" style="margin-left:0;">检查登录</button>
             <button class="mon" id="logoutBtn" style="margin-left:0;">退出登录</button>
           </div>
           <div class="mini-note">
-            推荐流程：打开官方 12306 页面 → 用 12306 App 扫码确认 → 回到本页点「导入登录态」。
-            登录态只存在服务器内存、不落盘；服务重启或长时间空闲后需重新登录。
+            用手机 <b>12306 App「扫一扫」</b> 扫上面的二维码并确认登录即可。
+            每个人扫自己的码、各自独立；登录态只存服务器内存、不落盘，服务重启或长时间空闲后需重新登录。
+            <br>二维码有效期约 2 分钟，过期请点「获取二维码」重取。
           </div>
-          <details style="margin-top:12px;">
-            <summary class="mini-note" style="cursor:pointer;">实验：页面内二维码登录</summary>
-            <div class="login-box" style="margin-top:10px;">
-              <div class="qr-wrap" id="qrWrap">
-                <div class="mask show" id="qrMask">实验功能<br>当前推荐使用官方登录页</div>
-                <img id="qrImg" alt="登录二维码" style="display:none;">
-              </div>
-              <div>
-                <button class="mon" id="qrBtn" style="margin-left:0;">获取页面内二维码</button>
-                <div class="mini-note">该方式受 12306 设备指纹影响，可能扫码确认后仍无法换取下单登录态。</div>
-              </div>
+          <!-- 官方网页登录：仅站主本机可用，远程访客隐藏 -->
+          <details id="officialBox" style="margin-top:12px; display:none;">
+            <summary class="mini-note" style="cursor:pointer;">本机备用：官方网页登录 / 导入登录态</summary>
+            <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="mon" id="officialOpenBtn" style="margin-left:0;">打开官方登录页</button>
+              <button class="mon" id="officialImportBtn" style="margin-left:0;">导入登录态</button>
             </div>
+            <div class="mini-note">仅在运行服务的本机可用：打开官方页扫码登录后点「导入登录态」。</div>
           </details>
         </div>
       </div>
@@ -1420,6 +1420,17 @@ function refreshJobLists(){
   refreshOrderJobs();
   startJobAutoRefresh();
   updateOrderSummary();
+  probeOfficialLogin();
+}
+// 官方网页登录/导入仅本机可用：探测后决定是否显示「本机备用」折叠区
+let _officialProbed = false;
+async function probeOfficialLogin(){
+  if(_officialProbed) return; _officialProbed = true;
+  try {
+    const r = await fetch("/api/order/login/official/available");
+    const j = await r.json();
+    if(j.ok && j.available && byId("officialBox")) $("#officialBox").style.display = "";
+  } catch(_){}
 }
 function startJobAutoRefresh(){
   clearInterval(orderUI.jobTimer);
@@ -1451,7 +1462,7 @@ function setLoggedIn(on, username){
     if(!orderUI.paxLoaded.length) loadPassengers();
   } else {
     st.textContent = "未登录"; st.style.color = "var(--gray)";
-    info.textContent = "尚未登录，请先打开官方登录页扫码，再导入登录态";
+    info.textContent = "尚未登录，请点「获取二维码」，用手机 12306 App 扫码登录";
   }
 }
 
@@ -1493,17 +1504,24 @@ $("#loginCheckBtn").addEventListener("click", checkLoginStatus);
 
 $("#qrBtn").addEventListener("click", startQrLogin);
 async function startQrLogin(){
-  const btn = $("#qrBtn"); btn.disabled = true; btn.textContent = "获取中…";
+  const btn = $("#qrBtn"); btn.disabled = true; btn.textContent = "启动登录中…";
   clearInterval(orderUI.qrTimer);
+  $("#qrMask").innerHTML = '<span class="spinner"></span> 正在为你打开登录…约 20 秒';
+  $("#qrMask").classList.add("show");
+  $("#qrImg").style.display = "none";
   try {
     const r = await fetch("/api/order/login/qr", {method:"POST"});
     const j = await r.json();
-    if(!j.ok){ alert(j.error||"获取二维码失败"); return; }
+    if(!j.ok){
+      $("#qrMask").innerHTML = escHtml(j.error||"获取二维码失败");
+      $("#qrMask").classList.add("show");
+      return;
+    }
     $("#qrImg").src = j.image; $("#qrImg").style.display = "";
     $("#qrMask").classList.remove("show");
-    $("#loginInfo").textContent = "请用 12306 App 扫码并确认";
+    $("#loginInfo").textContent = "请用手机 12306 App 扫码并确认";
     pollQr();
-  } catch(e){ alert("请求失败："+e.message); }
+  } catch(e){ $("#qrMask").innerHTML = "请求失败："+escHtml(e.message); $("#qrMask").classList.add("show"); }
   finally { btn.disabled = false; btn.textContent = "刷新二维码"; }
 }
 function pollQr(){
@@ -1537,7 +1555,7 @@ $("#logoutBtn").addEventListener("click", async ()=>{
   clearInterval(orderUI.qrTimer);
   if(byId("qrImg")) $("#qrImg").style.display = "none";
   if(byId("qrMask")){
-    $("#qrMask").innerHTML = "实验功能<br>当前推荐使用官方登录页";
+    $("#qrMask").innerHTML = "点「获取二维码」开始";
     $("#qrMask").classList.add("show");
   }
   orderUI.paxLoaded = []; renderPassengers([]);

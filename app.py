@@ -27,6 +27,7 @@ import ticket
 import notify
 from monitor_service import MANAGER
 import order12306
+import chrome_login
 from order_service import MANAGER as ORDER_MANAGER
 
 app = Flask(__name__)
@@ -159,6 +160,7 @@ def _evict_session(sid: str):
     try:
         ORDER_MANAGER.purge_owner(sid)
         MANAGER.purge_owner(sid)
+        chrome_login.MANAGER.drop(sid)     # 关掉可能还开着的登录 Chrome
         order12306.REGISTRY.drop(sid)
     finally:
         with _SESSION_LOCK:
@@ -476,16 +478,28 @@ def api_monitor_delete():
 
 @app.route("/api/order/login/qr", methods=["POST"])
 def api_order_login_qr():
-    """生成 12306 登录二维码（base64 图片）。"""
-    ok, img, msg = current_login().create_qr()
+    """为当前会话开一个真 Chrome 出二维码（多人各自独立）。"""
+    ok, img, msg = chrome_login.MANAGER.start(current_sid())
     if not ok:
         return jsonify({"ok": False, "error": msg or "获取二维码失败"})
     return jsonify({"ok": True, "image": img})
 
 
+def _is_local_request() -> bool:
+    return request.remote_addr in _LOCAL_ADDRS
+
+
+@app.route("/api/order/login/official/available")
+def api_order_login_official_available():
+    """官方登录页/导入登录态仅本机可用（远程访客该用扫码）。"""
+    return jsonify({"ok": True, "available": _is_local_request()})
+
+
 @app.route("/api/order/login/official/open", methods=["POST"])
 def api_order_login_official_open():
-    """打开官方 12306 Chrome 登录页（推荐登录方式）。"""
+    """打开官方 12306 Chrome 登录页（仅本机：远程访客无法操作站主电脑）。"""
+    if not _is_local_request():
+        return jsonify({"ok": False, "error": "该方式仅本机可用，请使用扫码登录"}), 403
     try:
         _open_official_chrome()
     except OSError as e:
@@ -495,7 +509,9 @@ def api_order_login_official_open():
 
 @app.route("/api/order/login/official/import", methods=["POST"])
 def api_order_login_official_import():
-    """从官方 Chrome 调试端口导入 12306 Cookie。"""
+    """从官方 Chrome 调试端口导入 12306 Cookie（仅本机）。"""
+    if not _is_local_request():
+        return jsonify({"ok": False, "error": "该方式仅本机可用，请使用扫码登录"}), 403
     login = current_login()
     ok, msg, count = _import_chrome_12306_cookies(login)
     return jsonify({
@@ -511,8 +527,9 @@ def api_order_login_official_import():
 @app.route("/api/order/login/status", methods=["POST"])
 def api_order_login_status():
     """轮询扫码状态：waiting / scanned / success / expired / error。"""
-    login = current_login()
-    state, msg = login.check_qr()
+    sid = current_sid()
+    state, msg = chrome_login.MANAGER.poll(sid)
+    login = order12306.REGISTRY.get_or_create(sid)
     return jsonify({"ok": True, "state": state, "msg": msg,
                     "username": login.username})
 
@@ -529,6 +546,7 @@ def api_order_login_check():
 @app.route("/api/order/logout", methods=["POST"])
 def api_order_logout():
     sid = current_sid()
+    chrome_login.MANAGER.drop(sid)     # 关掉可能还开着的登录 Chrome
     current_login().clear()
     # 退出登录即停掉本会话名下还在跑的抢票任务（登录态已清，再跑也会失败）
     stopped = ORDER_MANAGER.stop_owner(sid)
