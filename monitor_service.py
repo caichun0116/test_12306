@@ -196,6 +196,9 @@ class Job:
                                 items=items[:8])
         except Exception as e:
             self.last_error = f"推送失败：{e}"
+        # 抄送站主一份（与访客同渠道+token 时自动去重）
+        notify.push_to_owner(title, body, url=url, items=items[:8],
+                             skip_if=(self.channel, self.token))
 
     # ── 辅助：结构化车次 → notify 卡片 item ──
     def _to_item(self, t: dict, date: str) -> dict:

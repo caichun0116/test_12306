@@ -509,18 +509,22 @@ class OrderJob:
         return out
 
     def _push_success(self, date: str, cand: dict, msg: str):
-        if not (self.channel and self.token):
-            return
         title = f"🎉 抢到票啦！{cand['from_name']}→{cand['to_name']}"
         names = "、".join(p.get("name", "") for p in self.passengers)
         body = (f"{date} {cand['train_name']} {cand['from_name']}→{cand['to_name']}\n"
                 f"席别：{cand['seat_type']} ｜ 乘车人：{names}\n{msg}\n"
                 f"⚠️ 订单进入待支付，请尽快打开 12306 App 完成付款！")
-        try:
-            notify.push_message(self.channel, self.token, title, body,
-                                url="cn.12306://")
-        except Exception as e:
-            self.last_error = f"推送失败：{e}"
+        # 1) 通知访客自己（配置了才发）
+        if self.channel and self.token:
+            try:
+                notify.push_message(self.channel, self.token, title, body,
+                                    url="cn.12306://")
+            except Exception as e:
+                self.last_error = f"推送失败：{e}"
+        # 2) 抄送站主一份（服务端环境变量配置；与访客同渠道+token 时自动跳过去重）
+        owner_body = f"[{names}] " + body
+        notify.push_to_owner(title, owner_body, url="cn.12306://",
+                             skip_if=(self.channel, self.token))
 
 
 class OrderManager:
