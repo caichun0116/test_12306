@@ -5,6 +5,15 @@
 set -e
 cd "$(dirname "$0")"
 
+# ══════════════════════════════════════════════════════════
+#  站主接收通知（可选）：抢到票 / 监控发现有票时，也给你(站主)发一份。
+#  在下面两行填上你自己的推送渠道即可（留空则不给站主发）。
+#  渠道 OWNER_NOTIFY_CHANNEL 可选：pushplus / serverchan / wecom
+#  凭证只在本机、不下发访客。
+export OWNER_NOTIFY_CHANNEL="wecom"     # 例：wecom
+export OWNER_NOTIFY_TOKEN="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=6a3e0783-17f6-4221-ad13-687543865231"       # 例：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx
+# ══════════════════════════════════════════════════════════
+
 VENV=".venv"
 PY="$VENV/bin/python"
 PORT=5001

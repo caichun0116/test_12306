@@ -76,6 +76,11 @@ python3 -m venv .venv
 其它环境变量：`HOST`（默认 `127.0.0.1`）、`PORT`、`FLASK_DEBUG`（对外分享务必不要开）、`FLASK_SECRET`（会话签名密钥，不设则读/生成 `.flask_secret`）、`LOGIN_IDLE_TTL`（登录态空闲驱逐秒数，默认 `1800`）、`ORDER_MAX_PARALLEL_TICKS`（抢票任务同时查询轮数，默认 `2`）、`ORDER_MIN_GAP`（相邻下单全局最小间隔秒，默认 `3`）、`ORDER_ACCOUNT_GAP`（同一账号两次下单最小间隔秒，默认 `8`）。
 
 > **下单串行闸门**：多人共用一个出口 IP 时，多账号同一瞬间冲下单接口最容易触发 12306 风控。已加全局串行闸门 + 全局/每账号最小间隔（带 ±30% 抖动），把下单动作错开。这**缓解**但不**根治** IP 集中问题——彻底解决需要每账号独立代理 IP 或各自在自己电脑跑。间隔越大越安全但抢票越慢，可用上面两个环境变量按需调（设 `0` 关闭对应间隔）。
+
+> **站主抄送通知**：设置 `OWNER_NOTIFY_CHANNEL`（`pushplus`/`serverchan`/`wecom`）+ `OWNER_NOTIFY_TOKEN`（对应 token/webhook）后，**抢到票**和**监控发现有票**时，除了通知访客自己，也给站主抄送一份。凭证只存服务端、**绝不下发前端**（访客拿不到你的 webhook）。访客本人就是站主（同渠道+token）时自动去重不重复推。留空则不抄送。
+> ```bash
+> OWNER_NOTIFY_CHANNEL='wecom' OWNER_NOTIFY_TOKEN='你的企业微信webhook' .venv/bin/python app.py
+> ```
 敏感文件均已 gitignore 且 `0600` 落盘；推送 token 在装了 `cryptography` 时字段级加密。
 
 ## 文件说明
